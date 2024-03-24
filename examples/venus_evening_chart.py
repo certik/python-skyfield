@@ -18,8 +18,8 @@ start, end = ts.utc(2021, 3, 7), ts.utc(2022, 2, 7)
 
 f = almanac.sunrise_sunset(eph, observer)
 t, y = almanac.find_discrete(start, end, f)
-sunsets = (y == 0)
-t = t[sunsets]
+sunrise = (y == 1)
+t = t[sunrise]
 
 # For each moment of sunset, ask Skyfield for the month number, the day
 # number, and for Venus’s altitude, azimuth, and magnitude.
@@ -105,8 +105,8 @@ ax.set(
     title='Venus at sunset for 40°N latitude, April 2021 – January 2022',
     xlabel='Azimuth (°)',
     ylabel='Altitude (°)',
-    xlim=(195, 300),
-    ylim=(0, max(y) + 10.0),
+#    xlim=(195, 300),
+#    ylim=(0, max(y) + 10.0),
     xticks=np.arange(210, 300, 15),
 )
 
@@ -114,4 +114,4 @@ sky = LinearSegmentedColormap.from_list('sky', ['black', 'blue'])
 extent = ax.get_xlim() + ax.get_ylim()
 ax.imshow([[0,0], [1,1]], cmap=sky, interpolation='bicubic', extent=extent)
 
-fig.savefig('venus_evening_chart.png')
+fig.savefig('venus_morning_chart.png')
