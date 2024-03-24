@@ -107,7 +107,7 @@ ax.set(
     ylabel='Altitude (°)',
 #    xlim=(195, 300),
 #    ylim=(0, max(y) + 10.0),
-    xticks=np.arange(100, 150, 15),
+    xticks=np.arange(90, 180, 15),
 )
 
 sky = LinearSegmentedColormap.from_list('sky', ['black', 'blue'])
