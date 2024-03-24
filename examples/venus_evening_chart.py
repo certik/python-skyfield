@@ -11,10 +11,10 @@ MONTH_NAMES = '0 Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split()
 
 eph = load('de421.bsp')
 earth, sun, venus = eph['earth'], eph['sun'], eph['venus']
-observer = wgs84.latlon(+40.0, 0.0)
+observer = wgs84.latlon(35.88808, -106.30697)
 
 ts = load.timescale()
-start, end = ts.utc(2021, 3, 7), ts.utc(2022, 2, 7)
+start, end = ts.utc(2023, 10, 1), ts.utc(2024, 4, 1)
 
 f = almanac.sunrise_sunset(eph, observer)
 t, y = almanac.find_discrete(start, end, f)
@@ -107,7 +107,7 @@ ax.set(
     ylabel='Altitude (°)',
 #    xlim=(195, 300),
 #    ylim=(0, max(y) + 10.0),
-    xticks=np.arange(210, 300, 15),
+    xticks=np.arange(100, 150, 15),
 )
 
 sky = LinearSegmentedColormap.from_list('sky', ['black', 'blue'])
