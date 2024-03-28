@@ -1,5 +1,5 @@
 import numpy as np
-from matplotlib.pylab import plot, savefig, legend, grid
+from matplotlib.pylab import plot, savefig, legend, grid, gca
 from skyfield.api import load
 
 eph = load('de421.bsp')
@@ -10,7 +10,8 @@ eph = load('de421.bsp')
 # In days, spanning about ~154 years
 start_time = 2414864.5
 end_time = 2471184.5
-N = 100 # steps
+N = 1000 # steps
+AU = 149.5978707e6 # km
 
 planets = [
     # Solar System Barycenter
@@ -18,24 +19,29 @@ planets = [
     "Neptune", "Pluto", "Sun",
     # Earth Barycenter
     "Moon", "Earth",
-    # Mercury Barycenter
-    "Mercury",
-    # Venus Barycenter
-    "Venus",
-    # Mars Barycenter
-    "Mars",
 ]
 
-for p in range(10):
+Np = 7
+
+data = np.empty((Np, N, 3))
+for p in range(Np):
     xx = []
     yy = []
     for i in range(N):
         time = start_time + (end_time - start_time)*i/(N-1)
+        # Input: [days]
+        # Output: [km]
         x, y, z = eph.segments[p].spk_segment.compute(time)
-        xx.append(x)
-        yy.append(y)
-    plot(xx, yy, label=planets[p])
+        data[p, i, :] = [x, y, z]
+
+data = data / AU
+
+for p in range(Np):
+    x = data[p,:,1]
+    y = data[p,:,2]
+    plot(x, y, "-", label=planets[p])
 
 legend()
 grid()
+gca().set_aspect("equal")
 savefig('solar_system.png')
