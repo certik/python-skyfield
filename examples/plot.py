@@ -8,7 +8,7 @@ eph = load('de421.bsp')
 #earth, sun, venus = eph['earth'], eph['sun'], eph['venus']
 #eph.segments[2].spk_segment.compute_and_differentiate(2414864.4)
 
-# In days, spanning about ~154 years
+# In days, spanning about ~154 years (1900 to 2050)
 start_time = 2414864.5
 end_time = 2471184.5
 N = 1000 # steps
