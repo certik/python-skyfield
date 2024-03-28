@@ -1,5 +1,6 @@
 import numpy as np
 from matplotlib.pylab import plot, savefig, legend, grid, gca
+from scipy.spatial.transform import Rotation
 from skyfield.api import load
 
 eph = load('de421.bsp')
@@ -21,7 +22,12 @@ planets = [
     "Moon", "Earth",
 ]
 
-Np = 7
+# The system of coordinates seems to be with Earth's north pole pointing up
+# along the z-axis. We rotate along the x-axis clock-wise by the Earth's axial
+# tilt of 23.44° to get the Earth's orbit into the (x,y) plane.
+R = Rotation.from_euler('x', [-23.44], degrees=True).as_matrix()
+
+Np = 10
 
 data = np.empty((Np, N, 3))
 for p in range(Np):
@@ -32,13 +38,14 @@ for p in range(Np):
         # Input: [days]
         # Output: [km]
         x, y, z = eph.segments[p].spk_segment.compute(time)
-        data[p, i, :] = [x, y, z]
+        X = np.array([x, y, z])
+        data[p, i, :] = np.dot(R, X)
 
 data = data / AU
 
 for p in range(Np):
-    x = data[p,:,1]
-    y = data[p,:,2]
+    x = data[p,:,0]
+    y = data[p,:,1]
     plot(x, y, "-", label=planets[p])
 
 legend()
