@@ -2,15 +2,19 @@ import numpy as np
 from matplotlib.pylab import plot, savefig, legend, grid, gca
 from scipy.spatial.transform import Rotation
 from skyfield.api import load
+from skyfield.timelib import Time
 
+# https://en.wikipedia.org/wiki/Jet_Propulsion_Laboratory_Development_Ephemeris
 eph = load('de421.bsp')
 
-#earth, sun, venus = eph['earth'], eph['sun'], eph['venus']
-#eph.segments[2].spk_segment.compute_and_differentiate(2414864.4)
-
-# In days, spanning about ~154 years (1900 to 2050)
+# In days, spanning about ~154 years (1899 to 2053)
+ts = load.timescale()
 start_time = 2414864.5
 end_time = 2471184.5
+# To convert from a date: time = ts.utc(2024, 4, 1)
+print("start_time:", Time(ts, start_time).utc)
+print("end_time:", Time(ts, end_time).utc)
+
 N = 1000 # steps
 AU = 149.5978707e6 # km
 
@@ -37,6 +41,7 @@ for p in range(Np):
         time = start_time + (end_time - start_time)*i/(N-1)
         # Input: [days]
         # Output: [km]
+        # To get derivatives: compute_and_differentiate(time)
         x, y, z = eph.segments[p].spk_segment.compute(time)
         X = np.array([x, y, z])
         data[p, i, :] = np.dot(R, X)
