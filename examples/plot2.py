@@ -19,19 +19,63 @@ t = ts.from_datetime(now)
 
 
 
+print("Location: Los Alamos, NM")
+print(observer)
 print("Time:", t.astimezone(zone))
 
 apparent = (earth + observer).at(t).observe(sun).apparent()
 alt, az, distance = apparent.altaz()
-#x, y = az.degrees, alt.degrees
 print("Sun:")
+print("Altitude (0-90):", alt)
+print("Azimuth (0-360): ", az)
+print()
+
+apparent = (earth + observer).at(t).observe(moon).apparent()
+alt, az, distance = apparent.altaz()
+print("Moon:")
 print("Altitude (0-90):", alt)
 print("Azimuth (0-360): ", az)
 print()
 
 apparent = (earth + observer).at(t).observe(venus).apparent()
 alt, az, distance = apparent.altaz()
-#x, y = az.degrees, alt.degrees
+print("Venus:")
+print("Altitude (0-90):", alt)
+print("Azimuth (0-360): ", az)
+print()
+print()
+
+#---------------
+
+# Fredericksburg, TX
+observer = wgs84.latlon(30.274167, -98.871944, 516)
+
+ts = load.timescale()
+zone = timezone('US/Central')
+now = zone.localize(dt.datetime(2024, 4, 8, 13, 35, 10))
+t = ts.from_datetime(now)
+
+
+print("Location: Fredericksburg, TX")
+print(observer)
+print("Time:", t.astimezone(zone))
+
+apparent = (earth + observer).at(t).observe(sun).apparent()
+alt, az, distance = apparent.altaz()
+print("Sun:")
+print("Altitude (0-90):", alt)
+print("Azimuth (0-360): ", az)
+print()
+
+apparent = (earth + observer).at(t).observe(moon).apparent()
+alt, az, distance = apparent.altaz()
+print("Moon:")
+print("Altitude (0-90):", alt)
+print("Azimuth (0-360): ", az)
+print()
+
+apparent = (earth + observer).at(t).observe(venus).apparent()
+alt, az, distance = apparent.altaz()
 print("Venus:")
 print("Altitude (0-90):", alt)
 print("Azimuth (0-360): ", az)
