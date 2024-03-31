@@ -53,7 +53,8 @@ def compute(observer, t, filename):
         Circle((sun_az, sun_alt), sun_r, color="y"),
         Circle((moon_az, moon_alt), moon_r, color="k"),
     ]
-    gca().add_collection(PatchCollection(patches, alpha=0.4))
+    gca().add_collection(PatchCollection(patches, alpha=0.6,
+        match_original=True))
     gca().set_aspect("equal")
     grid()
     xlim([sun_az-1, sun_az+1])
