@@ -2,7 +2,7 @@ import datetime as dt
 from math import atan, pi
 import numpy as np
 from pytz import timezone
-from matplotlib.pylab import plot, savefig, legend, grid, gca
+from matplotlib.pylab import plot, savefig, legend, grid, gca, scatter, figure
 from skyfield.api import load, wgs84
 from skyfield.units import Angle
 
@@ -15,7 +15,7 @@ ts = load.timescale()
 solar_radius_km = 696340.0
 moon_radius_km = 1737.1
 
-def compute(observer, t):
+def compute(observer, t, filename):
     print(observer)
     print("Time:", t.astimezone(zone))
 
@@ -28,6 +28,11 @@ def compute(observer, t):
     print("Radius (deg):", radius_angle)
     print()
 
+    figure()
+    plot([alt.degrees], [az.degrees], "o")
+    scatter(alt.degrees, az.degrees, s=radius_angle.degrees,
+        facecolors='none', edgecolors='blue')
+
     apparent = (earth + observer).at(t).observe(moon).apparent()
     alt, az, distance = apparent.altaz()
     radius_angle = Angle(radians=atan(moon_radius_km/distance.km))
@@ -37,11 +42,17 @@ def compute(observer, t):
     print("Radius (deg):", radius_angle)
     print()
 
-    apparent = (earth + observer).at(t).observe(venus).apparent()
-    alt, az, distance = apparent.altaz()
-    print("Venus:")
-    print("Altitude (0-90):", alt)
-    print("Azimuth (0-360): ", az)
+#    apparent = (earth + observer).at(t).observe(venus).apparent()
+#    alt, az, distance = apparent.altaz()
+#    print("Venus:")
+#    print("Altitude (0-90):", alt)
+#    print("Azimuth (0-360): ", az)
+
+    plot([alt.degrees], [az.degrees], "o")
+    scatter(alt.degrees, az.degrees, s=radius_angle.degrees,
+        facecolors='none', edgecolors='blue')
+
+    savefig(filename)
 
 
 # Los Alamos
@@ -51,14 +62,14 @@ zone = timezone('US/Mountain')
 now = zone.localize(dt.datetime.now())
 t = ts.from_datetime(now)
 print("Location: Los Alamos, NM")
-compute(observer, t)
+compute(observer, t, "e1.png")
 print()
 print()
 
 # https://eclipse2024.org/2023eclipse/eclipse-cities/city/28230.html
 now = zone.localize(dt.datetime(2023, 10, 14, 10, 35, 20))
 t = ts.from_datetime(now)
-compute(observer, t)
+compute(observer, t, "e2.png")
 print()
 print()
 
@@ -71,4 +82,4 @@ zone = timezone('US/Central')
 now = zone.localize(dt.datetime(2024, 4, 8, 13, 35, 10))
 t = ts.from_datetime(now)
 print("Location: Fredericksburg, TX")
-compute(observer, t)
+compute(observer, t, "e3.png")
