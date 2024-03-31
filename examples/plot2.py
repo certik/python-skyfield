@@ -1,6 +1,8 @@
 from datetime import datetime
 from math import atan, pi
 import numpy as np
+from numpy import (abs, arcsin, arccos, arctan2, array, clip, cos,
+                   minimum, pi, sin, sqrt, tan, where, zeros_like)
 from pytz import timezone
 from matplotlib.pylab import (plot, savefig, legend, grid, gca, scatter,
         figure, xlim, ylim, title, xlabel, ylabel)
@@ -9,9 +11,11 @@ from matplotlib.collections import PatchCollection
 import matplotlib.ticker as ticker
 from skyfield.api import load, wgs84
 from skyfield.units import Angle
-from skyfield.earthlib import compute_limb_angle
 from skyfield.relativity import add_aberration, add_deflection
 from skyfield.positionlib import Apparent
+from skyfield.functions import dots
+from skyfield.constants import (AU_M, ANGVEL, DAY_S, DEG2RAD, ERAD,
+                        IERS_2010_INVERSE_EARTH_FLATTENING, RAD2DEG, T0, tau)
 
 
 
@@ -23,6 +27,51 @@ ts = load.timescale()
 
 solar_radius_km = 696340.0
 moon_radius_km = 1737.1
+earth_radius_au = ERAD / AU_M
+
+def compute_limb_angle(position_au, observer_au):
+    """Determine the angle of an object above or below the Earth's limb.
+
+    Given an object's GCRS `position_au` |xyz| vector and the position
+    of an `observer_au` as a vector in the same coordinate system,
+    return a tuple that provides `(limb_ang, nadir_ang)`:
+
+    limb_angle
+        Angle of observed object above (+) or below (-) limb in degrees.
+    nadir_angle
+        Nadir angle of observed object as a fraction of apparent radius
+        of limb: <1.0 means below the limb, =1.0 means on the limb, and
+        >1.0 means above the limb.
+
+    """
+    # Compute the distance to the object and the distance to the observer.
+
+    disobj = sqrt(dots(position_au, position_au))
+    disobs = sqrt(dots(observer_au, observer_au))
+
+    # Compute apparent angular radius of Earth's limb.
+
+    aprad = arcsin(minimum(earth_radius_au / disobs, 1.0))
+
+    # Compute zenith distance of Earth's limb.
+
+    zdlim = pi - aprad
+
+    # Compute zenith distance of observed object.
+
+    coszd = dots(position_au, observer_au) / (disobj * disobs)
+    coszd = clip(coszd, -1.0, 1.0)
+    zdobj = arccos(coszd)
+
+    # Angle of object wrt limb is difference in zenith distances.
+
+    limb_angle = (zdlim - zdobj) * RAD2DEG
+
+    # Nadir angle of object as a fraction of angular radius of limb.
+
+    nadir_angle = (pi - zdobj) / aprad
+
+    return limb_angle, nadir_angle
 
 def compute_apparent(self):
     t = self.t
