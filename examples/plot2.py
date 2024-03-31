@@ -48,13 +48,13 @@ def compute(observer, t, filename):
 
     figure()
     plot([sun_az], [sun_alt], "oy")
-    plot([moon_az], [moon_alt], "ok")
-    patches = [
-        Circle((sun_az, sun_alt), sun_r, color="y"),
-        Circle((moon_az, moon_alt), moon_r, color="k"),
-    ]
-    gca().add_collection(PatchCollection(patches, alpha=0.6,
-        match_original=True))
+    plot([moon_az], [moon_alt], ".k")
+    gca().add_patch(Circle((sun_az, sun_alt), sun_r,
+        color="y", alpha=0.5))
+    gca().add_patch(Circle((sun_az, sun_alt), sun_r,
+        ec="orange", fc="none", lw=2))
+    gca().add_patch(Circle((moon_az, moon_alt), moon_r,
+        ec="k", fc="none", lw=2))
     gca().set_aspect("equal")
     grid()
     xlim([sun_az-1, sun_az+1])
