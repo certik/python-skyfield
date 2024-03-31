@@ -55,9 +55,17 @@ compute(observer, t)
 print()
 print()
 
+# https://eclipse2024.org/2023eclipse/eclipse-cities/city/28230.html
+now = zone.localize(dt.datetime(2023, 10, 14, 10, 35, 20))
+t = ts.from_datetime(now)
+compute(observer, t)
+print()
+print()
+
 #---------------
 
 # Fredericksburg, TX
+# https://www.timeanddate.com/eclipse/in/@30.276139106760382,-98.872489929199233?iso=20240408
 observer = wgs84.latlon(30.274167, -98.871944, 516)
 zone = timezone('US/Central')
 now = zone.localize(dt.datetime(2024, 4, 8, 13, 35, 10))
