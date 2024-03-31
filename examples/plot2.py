@@ -76,19 +76,19 @@ def compute(observer, zone, time, loc, filename):
 
 compute(wgs84.latlon(35.90369476314685, -106.30851268194805, 2230),
         timezone('US/Mountain'), datetime.now(),
-        "Los Alamos, NM", "e1.png")
+        "Los Alamos, NM", "e1.pdf")
 
 # https://eclipse2024.org/2023eclipse/eclipse-cities/city/28230.html
 compute(wgs84.latlon(35.90369476314685, -106.30851268194805, 2230),
         timezone('US/Mountain'), datetime(2023, 10, 14, 10, 36, 8),
-        "Los Alamos, NM", "e2.png")
+        "Los Alamos, NM", "e2.pdf")
 
 # https://www.timeanddate.com/eclipse/in/@35.16789477316579,-106.58454895019533?iso=20231014
 compute(wgs84.latlon(35.16789477316579,-106.58454895019533, 1600),
         timezone('US/Mountain'), datetime(2023, 10, 14, 10, 37, 1),
-        "Albuquerque, NM", "e2b.png")
+        "Albuquerque, NM", "e2b.pdf")
 
 # https://www.timeanddate.com/eclipse/in/@30.276139106760382,-98.872489929199233?iso=20240408
 compute(wgs84.latlon(30.274167, -98.871944, 516),
         timezone('US/Central'), datetime(2024, 4, 8, 13, 35, 10),
-        "Fredericksburg, TX", "e3.png")
+        "Fredericksburg, TX", "e3.pdf")
