@@ -6,6 +6,7 @@ from matplotlib.pylab import (plot, savefig, legend, grid, gca, scatter,
         figure, xlim, ylim)
 from matplotlib.patches import Circle
 from matplotlib.collections import PatchCollection
+import matplotlib.ticker as ticker
 from skyfield.api import load, wgs84
 from skyfield.units import Angle
 
@@ -51,14 +52,19 @@ def compute(observer, zone, time, loc, filename):
     print()
 
 
-    figure()
+    figure(figsize=(5,5))
     #plot([sun_az], [sun_alt], "oy")
     #plot([moon_az], [moon_alt], ".k")
-    gca().add_patch(Circle((sun_az, sun_alt), sun_r,
+    ax = gca()
+    ax.add_patch(Circle((sun_az, sun_alt), sun_r,
         ec="none", fc="orange", alpha=1.0))
-    gca().add_patch(Circle((moon_az, moon_alt), moon_r,
+    ax.add_patch(Circle((moon_az, moon_alt), moon_r,
         ec="none", fc="k", lw=2))
-    gca().set_aspect("equal")
+    ax.set_aspect("equal")
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(1.0))
+    ax.xaxis.set_minor_locator(ticker.MultipleLocator(0.25))
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(1.0))
+    ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.25))
     grid()
     xlim([sun_az-1, sun_az+1])
     ylim([sun_alt-1, sun_alt+1])
