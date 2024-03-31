@@ -75,7 +75,7 @@ print()
 print()
 
 # https://eclipse2024.org/2023eclipse/eclipse-cities/city/28230.html
-now = zone.localize(dt.datetime(2023, 10, 14, 10, 35, 20))
+now = zone.localize(dt.datetime(2023, 10, 14, 10, 36, 8))
 t = ts.from_datetime(now)
 compute(observer, t, "e2.png")
 print()
