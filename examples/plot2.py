@@ -33,17 +33,6 @@ def compute_apparent(self):
     bcrs_velocity = cb.velocity.au_per_d
     observer_gcrs_au = cb._observer_gcrs_au
 
-    # If a single observer position (3,) is observing an array of
-    # targets (3,n), then deflection and aberration will complain
-    # that "operands could not be broadcast together" unless we give
-    # the observer another dimension too.
-    if len(bcrs_position.shape) < len(target_au.shape):
-        shape = bcrs_position.shape + (1,)
-        bcrs_position = bcrs_position.reshape(shape)
-        bcrs_velocity = bcrs_velocity.reshape(shape)
-        if observer_gcrs_au is not None:
-            observer_gcrs_au = observer_gcrs_au.reshape(shape)
-
     if observer_gcrs_au is None:
         include_earth_deflection = array((False,))
     else:
