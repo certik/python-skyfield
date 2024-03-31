@@ -18,7 +18,8 @@ ts = load.timescale()
 solar_radius_km = 696340.0
 moon_radius_km = 1737.1
 
-def compute(observer, t, filename):
+def compute(observer, t, loc, filename):
+    print(loc)
     print(observer)
     print("Time:", t.astimezone(zone))
 
@@ -43,6 +44,8 @@ def compute(observer, t, filename):
     print("Altitude (0-90):", alt)
     print("Azimuth (0-360): ", az)
     print("Radius (deg):", radius_angle)
+    print()
+    print()
     print()
 
 
@@ -69,17 +72,12 @@ observer = wgs84.latlon(35.90369476314685, -106.30851268194805, 2230)
 zone = timezone('US/Mountain')
 now = zone.localize(dt.datetime.now())
 t = ts.from_datetime(now)
-print("Location: Los Alamos, NM")
-compute(observer, t, "e1.png")
-print()
-print()
+compute(observer, t, "Location: Los Alamos, NM", "e1.png")
 
 # https://eclipse2024.org/2023eclipse/eclipse-cities/city/28230.html
 now = zone.localize(dt.datetime(2023, 10, 14, 10, 36, 8))
 t = ts.from_datetime(now)
-compute(observer, t, "e2.png")
-print()
-print()
+compute(observer, t, "Location: Los Alamos, NM", "e2.png")
 
 # -----------------------
 
@@ -88,10 +86,7 @@ observer = wgs84.latlon(35.16789477316579,-106.58454895019533, 1600)
 # https://www.timeanddate.com/eclipse/in/@35.16789477316579,-106.58454895019533?iso=20231014
 now = zone.localize(dt.datetime(2023, 10, 14, 10, 37, 1))
 t = ts.from_datetime(now)
-print("Location: Albuquerque, NM")
-compute(observer, t, "e2b.png")
-print()
-print()
+compute(observer, t, "Location: Albuquerque, NM", "e2b.png")
 
 #---------------
 
@@ -101,5 +96,4 @@ observer = wgs84.latlon(30.274167, -98.871944, 516)
 zone = timezone('US/Central')
 now = zone.localize(dt.datetime(2024, 4, 8, 13, 35, 10))
 t = ts.from_datetime(now)
-print("Location: Fredericksburg, TX")
-compute(observer, t, "e3.png")
+compute(observer, t, "Location: Fredericksburg, TX", "e3.png")
