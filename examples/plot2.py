@@ -9,6 +9,11 @@ from matplotlib.collections import PatchCollection
 import matplotlib.ticker as ticker
 from skyfield.api import load, wgs84
 from skyfield.units import Angle
+from skyfield.earthlib import compute_limb_angle
+from skyfield.relativity import add_aberration, add_deflection
+from skyfield.positionlib import Apparent
+
+
 
 # https://en.wikipedia.org/wiki/Jet_Propulsion_Laboratory_Development_Ephemeris
 eph = load('de421.bsp')
@@ -19,6 +24,48 @@ ts = load.timescale()
 solar_radius_km = 696340.0
 moon_radius_km = 1737.1
 
+def compute_apparent(self):
+    t = self.t
+    target_au = self.position.au.copy()
+
+    cb = self.center_barycentric
+    bcrs_position = cb.position.au
+    bcrs_velocity = cb.velocity.au_per_d
+    observer_gcrs_au = cb._observer_gcrs_au
+
+    # If a single observer position (3,) is observing an array of
+    # targets (3,n), then deflection and aberration will complain
+    # that "operands could not be broadcast together" unless we give
+    # the observer another dimension too.
+    if len(bcrs_position.shape) < len(target_au.shape):
+        shape = bcrs_position.shape + (1,)
+        bcrs_position = bcrs_position.reshape(shape)
+        bcrs_velocity = bcrs_velocity.reshape(shape)
+        if observer_gcrs_au is not None:
+            observer_gcrs_au = observer_gcrs_au.reshape(shape)
+
+    if observer_gcrs_au is None:
+        include_earth_deflection = array((False,))
+    else:
+        limb_angle, nadir_angle = compute_limb_angle(
+            target_au, observer_gcrs_au)
+        include_earth_deflection = nadir_angle >= 0.8
+
+    add_deflection(target_au, bcrs_position,
+                   self._ephemeris, t, include_earth_deflection)
+
+    add_aberration(target_au, bcrs_velocity, self.light_time)
+
+    v = self.velocity.au_per_d
+    if v is not None:
+        pass  # TODO: how to apply aberration and deflection to velocity?
+
+    apparent = Apparent(target_au, v, t, self.center, self.target)
+    apparent.center_barycentric = self.center_barycentric
+    apparent._observer_gcrs_au = observer_gcrs_au
+    return apparent
+
+
 def compute(observer, zone, time, loc, filename):
     time = zone.localize(time)
     t = ts.from_datetime(time)
@@ -26,7 +73,9 @@ def compute(observer, zone, time, loc, filename):
     print(observer)
     print("Time:", t.astimezone(zone))
 
-    apparent = (earth + observer).at(t).observe(sun).apparent()
+    obs = (earth + observer).at(t).observe(sun)
+    #apparent = obs.apparent()
+    apparent = compute_apparent(obs)
     alt, az, distance = apparent.altaz()
     radius_angle = Angle(radians=atan(solar_radius_km/distance.km))
     sun_alt = alt.degrees
