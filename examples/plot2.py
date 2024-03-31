@@ -2,7 +2,10 @@ import datetime as dt
 from math import atan, pi
 import numpy as np
 from pytz import timezone
-from matplotlib.pylab import plot, savefig, legend, grid, gca, scatter, figure
+from matplotlib.pylab import (plot, savefig, legend, grid, gca, scatter,
+        figure, xlim, ylim)
+from matplotlib.patches import Circle
+from matplotlib.collections import PatchCollection
 from skyfield.api import load, wgs84
 from skyfield.units import Angle
 
@@ -22,35 +25,39 @@ def compute(observer, t, filename):
     apparent = (earth + observer).at(t).observe(sun).apparent()
     alt, az, distance = apparent.altaz()
     radius_angle = Angle(radians=atan(solar_radius_km/distance.km))
+    sun_alt = alt.degrees
+    sun_az = az.degrees
+    sun_r = radius_angle.degrees
     print("Sun:")
     print("Altitude (0-90):", alt)
     print("Azimuth (0-360): ", az)
     print("Radius (deg):", radius_angle)
     print()
-
-    figure()
-    plot([alt.degrees], [az.degrees], "o")
-    scatter(alt.degrees, az.degrees, s=radius_angle.degrees,
-        facecolors='none', edgecolors='blue')
-
     apparent = (earth + observer).at(t).observe(moon).apparent()
     alt, az, distance = apparent.altaz()
     radius_angle = Angle(radians=atan(moon_radius_km/distance.km))
+    moon_alt = alt.degrees
+    moon_az = az.degrees
+    moon_r = radius_angle.degrees
     print("Moon:")
     print("Altitude (0-90):", alt)
     print("Azimuth (0-360): ", az)
     print("Radius (deg):", radius_angle)
     print()
 
-#    apparent = (earth + observer).at(t).observe(venus).apparent()
-#    alt, az, distance = apparent.altaz()
-#    print("Venus:")
-#    print("Altitude (0-90):", alt)
-#    print("Azimuth (0-360): ", az)
 
-    plot([alt.degrees], [az.degrees], "o")
-    scatter(alt.degrees, az.degrees, s=radius_angle.degrees,
-        facecolors='none', edgecolors='blue')
+    figure()
+    plot([sun_az], [sun_alt], "oy")
+    plot([moon_az], [moon_alt], "ok")
+    patches = [
+        Circle((sun_az, sun_alt), sun_r, color="y"),
+        Circle((moon_az, moon_alt), moon_r, color="k"),
+    ]
+    gca().add_collection(PatchCollection(patches, alpha=0.4))
+    gca().set_aspect("equal")
+    grid()
+    xlim([sun_az-1, sun_az+1])
+    ylim([sun_alt-1, sun_alt+1])
 
     savefig(filename)
 
