@@ -52,14 +52,12 @@ def compute(observer, zone, time, loc, filename):
 
 
     figure()
-    plot([sun_az], [sun_alt], "oy")
-    plot([moon_az], [moon_alt], ".k")
+    #plot([sun_az], [sun_alt], "oy")
+    #plot([moon_az], [moon_alt], ".k")
     gca().add_patch(Circle((sun_az, sun_alt), sun_r,
-        color="y", alpha=0.5))
-    gca().add_patch(Circle((sun_az, sun_alt), sun_r,
-        ec="orange", fc="none", lw=2))
+        ec="none", fc="orange", alpha=1.0))
     gca().add_patch(Circle((moon_az, moon_alt), moon_r,
-        ec="k", fc="none", lw=2))
+        ec="none", fc="k", lw=2))
     gca().set_aspect("equal")
     grid()
     xlim([sun_az-1, sun_az+1])
