@@ -81,6 +81,18 @@ compute(observer, t, "e2.png")
 print()
 print()
 
+# -----------------------
+
+observer = wgs84.latlon(35.16789477316579,-106.58454895019533, 1600)
+
+# https://www.timeanddate.com/eclipse/in/@35.16789477316579,-106.58454895019533?iso=20231014
+now = zone.localize(dt.datetime(2023, 10, 14, 10, 37, 1))
+t = ts.from_datetime(now)
+print("Location: Albuquerque, NM")
+compute(observer, t, "e2b.png")
+print()
+print()
+
 #---------------
 
 # Fredericksburg, TX
