@@ -33,12 +33,9 @@ def compute_apparent(self):
     bcrs_velocity = cb.velocity.au_per_d
     observer_gcrs_au = cb._observer_gcrs_au
 
-    if observer_gcrs_au is None:
-        include_earth_deflection = array((False,))
-    else:
-        limb_angle, nadir_angle = compute_limb_angle(
-            target_au, observer_gcrs_au)
-        include_earth_deflection = nadir_angle >= 0.8
+    limb_angle, nadir_angle = compute_limb_angle(
+        target_au, observer_gcrs_au)
+    include_earth_deflection = nadir_angle >= 0.8
 
     add_deflection(target_au, bcrs_position,
                    self._ephemeris, t, include_earth_deflection)
