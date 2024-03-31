@@ -3,7 +3,7 @@ from math import atan, pi
 import numpy as np
 from pytz import timezone
 from matplotlib.pylab import (plot, savefig, legend, grid, gca, scatter,
-        figure, xlim, ylim)
+        figure, xlim, ylim, title, xlabel, ylabel)
 from matplotlib.patches import Circle
 from matplotlib.collections import PatchCollection
 import matplotlib.ticker as ticker
@@ -68,7 +68,9 @@ def compute(observer, zone, time, loc, filename):
     grid()
     xlim([sun_az-1, sun_az+1])
     ylim([sun_alt-1, sun_alt+1])
-
+    xlabel(r"Azimuth [deg]")
+    ylabel(r"Altitude [deg]")
+    title("Sun and Moon on the sky\n%s\n%s" % (loc, t.astimezone(zone)))
     savefig(filename)
 
 
