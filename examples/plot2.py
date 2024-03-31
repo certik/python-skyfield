@@ -57,9 +57,9 @@ def compute(observer, zone, time, loc, filename):
     #plot([moon_az], [moon_alt], ".k")
     ax = gca()
     ax.add_patch(Circle((sun_az, sun_alt), sun_r,
-        ec="none", fc="orange", alpha=1.0))
+        ec="none", fc="orange", lw=0))
     ax.add_patch(Circle((moon_az, moon_alt), moon_r,
-        ec="none", fc="k", lw=2))
+        ec="none", fc="k", lw=0))
     ax.set_aspect("equal")
     ax.xaxis.set_major_locator(ticker.MultipleLocator(1.0))
     ax.xaxis.set_minor_locator(ticker.MultipleLocator(0.25))
