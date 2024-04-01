@@ -33,6 +33,7 @@ ts = load.timescale()
 solar_radius_km = 696340.0
 moon_radius_km = 1737.1
 earth_radius_au = ERAD / AU_M
+AU_KM = 149597870.700
 
 def compute_limb_angle(position_au, observer_au):
     """Determine the angle of an object above or below the Earth's limb.
@@ -140,7 +141,7 @@ def altaz(position, R):
     """
     position_au = np.dot(R, position)
     r_au, alt, az = to_spherical(position_au)
-    return alt, az, Distance(r_au)
+    return alt, az, r_au
 
 def deg_to_int(value, places=0):
     """Decompose `value` into units, minutes, seconds, and second fractions.
@@ -191,7 +192,7 @@ def compute(observer, zone, time, loc, filename):
     #apparent = obs.apparent()
     apparent = compute_apparent(obs)
     alt, az, distance = altaz(apparent.position.au, apparent.center_barycentric._altaz_rotation)
-    sun_r = asin(solar_radius_km/distance.km)
+    sun_r = asin(solar_radius_km/(distance*AU_KM))
     sun_alt = rad_to_deg(alt)
     sun_az = rad_to_deg(az)
     print("Sun:")
@@ -201,7 +202,7 @@ def compute(observer, zone, time, loc, filename):
     print()
     apparent = (earth + observer).at(t).observe(moon).apparent()
     alt, az, distance = altaz(apparent.position.au, apparent.center_barycentric._altaz_rotation)
-    moon_r = asin(moon_radius_km/distance.km)
+    moon_r = asin(moon_radius_km/(distance*AU_KM))
     moon_alt = rad_to_deg(alt)
     moon_az = rad_to_deg(az)
     print("Moon:")
