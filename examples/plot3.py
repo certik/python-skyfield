@@ -110,7 +110,7 @@ def altaz(position, R):
     
     `position` is in AU
     """
-    position_au = mxv(R, position)
+    position_au = np.dot(R, position)
     r_au, alt, az = to_spherical(position_au)
     return alt, az, Distance(r_au)
 
