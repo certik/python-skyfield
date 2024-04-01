@@ -1,6 +1,8 @@
 from datetime import datetime
 from math import atan, pi
 import numpy as np
+from numpy import (abs, arcsin, arccos, arctan2, array, clip, cos,
+                   minimum, pi, sin, sqrt, tan, where, zeros_like)
 from pytz import timezone
 from matplotlib.pylab import (plot, savefig, legend, grid, gca, scatter,
         figure, xlim, ylim, title, xlabel, ylabel)
@@ -9,6 +11,13 @@ from matplotlib.collections import PatchCollection
 import matplotlib.ticker as ticker
 from skyfield.api import load, wgs84
 from skyfield.units import Angle
+from skyfield.relativity import add_aberration, add_deflection
+from skyfield.positionlib import Apparent
+from skyfield.functions import dots
+from skyfield.constants import (AU_M, ANGVEL, DAY_S, DEG2RAD, ERAD,
+                        IERS_2010_INVERSE_EARTH_FLATTENING, RAD2DEG, T0, tau)
+
+
 
 # https://en.wikipedia.org/wiki/Jet_Propulsion_Laboratory_Development_Ephemeris
 eph = load('de421.bsp')
@@ -18,6 +27,79 @@ ts = load.timescale()
 
 solar_radius_km = 696340.0
 moon_radius_km = 1737.1
+earth_radius_au = ERAD / AU_M
+
+def compute_limb_angle(position_au, observer_au):
+    """Determine the angle of an object above or below the Earth's limb.
+
+    Given an object's GCRS `position_au` |xyz| vector and the position
+    of an `observer_au` as a vector in the same coordinate system,
+    return a tuple that provides `(limb_ang, nadir_ang)`:
+
+    limb_angle
+        Angle of observed object above (+) or below (-) limb in degrees.
+    nadir_angle
+        Nadir angle of observed object as a fraction of apparent radius
+        of limb: <1.0 means below the limb, =1.0 means on the limb, and
+        >1.0 means above the limb.
+
+    """
+    # Compute the distance to the object and the distance to the observer.
+
+    disobj = sqrt(dots(position_au, position_au))
+    disobs = sqrt(dots(observer_au, observer_au))
+
+    # Compute apparent angular radius of Earth's limb.
+
+    aprad = arcsin(minimum(earth_radius_au / disobs, 1.0))
+
+    # Compute zenith distance of Earth's limb.
+
+    zdlim = pi - aprad
+
+    # Compute zenith distance of observed object.
+
+    coszd = dots(position_au, observer_au) / (disobj * disobs)
+    coszd = clip(coszd, -1.0, 1.0)
+    zdobj = arccos(coszd)
+
+    # Angle of object wrt limb is difference in zenith distances.
+
+    limb_angle = (zdlim - zdobj) * RAD2DEG
+
+    # Nadir angle of object as a fraction of angular radius of limb.
+
+    nadir_angle = (pi - zdobj) / aprad
+
+    return limb_angle, nadir_angle
+
+def compute_apparent(self):
+    t = self.t
+    target_au = self.position.au.copy()
+
+    cb = self.center_barycentric
+    bcrs_position = cb.position.au
+    bcrs_velocity = cb.velocity.au_per_d
+    observer_gcrs_au = cb._observer_gcrs_au
+
+    limb_angle, nadir_angle = compute_limb_angle(
+        target_au, observer_gcrs_au)
+    include_earth_deflection = nadir_angle >= 0.8
+
+    add_deflection(target_au, bcrs_position,
+                   self._ephemeris, t, include_earth_deflection)
+
+    add_aberration(target_au, bcrs_velocity, self.light_time)
+
+    v = self.velocity.au_per_d
+    if v is not None:
+        pass  # TODO: how to apply aberration and deflection to velocity?
+
+    apparent = Apparent(target_au, v, t, self.center, self.target)
+    apparent.center_barycentric = self.center_barycentric
+    apparent._observer_gcrs_au = observer_gcrs_au
+    return apparent
+
 
 def compute(observer, zone, time, loc, filename):
     time = zone.localize(time)
@@ -26,7 +108,9 @@ def compute(observer, zone, time, loc, filename):
     print(observer)
     print("Time:", t.astimezone(zone))
 
-    apparent = (earth + observer).at(t).observe(sun).apparent()
+    obs = (earth + observer).at(t).observe(sun)
+    #apparent = obs.apparent()
+    apparent = compute_apparent(obs)
     alt, az, distance = apparent.altaz()
     radius_angle = Angle(radians=atan(solar_radius_km/distance.km))
     sun_alt = alt.degrees
