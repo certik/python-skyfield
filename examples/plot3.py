@@ -97,11 +97,7 @@ def compute_apparent(self):
 
     add_aberration(target_au, bcrs_velocity, self.light_time)
 
-    v = self.velocity.au_per_d
-    if v is not None:
-        pass  # TODO: how to apply aberration and deflection to velocity?
-
-    return target_au, self.center_barycentric._altaz_rotation
+    return target_au, cb._altaz_rotation
 
 def length_of(xyz):
     """Given a 3-element array |xyz|, return its length.
