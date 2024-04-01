@@ -14,8 +14,13 @@ from skyfield.units import Angle
 from skyfield.relativity import add_aberration, add_deflection
 from skyfield.positionlib import Apparent
 from skyfield.functions import dots
+from skyfield.functions import (
+    _T, _to_array, _to_spherical_and_rates, angle_between, from_spherical,
+    length_of, mxm, mxv, rot_z, to_spherical,
+)
 from skyfield.constants import (AU_M, ANGVEL, DAY_S, DEG2RAD, ERAD,
                         IERS_2010_INVERSE_EARTH_FLATTENING, RAD2DEG, T0, tau)
+from skyfield.units import Angle, AngleRate, Distance, Velocity, _interpret_angle
 
 
 
@@ -100,6 +105,33 @@ def compute_apparent(self):
     apparent._observer_gcrs_au = observer_gcrs_au
     return apparent
 
+def altaz(position, temperature_C, pressure_mbar):
+    """Compute (alt, az, distance) relative to the observer's horizon."""
+    cb = position.center_barycentric
+    if cb is not None:
+        R = cb._altaz_rotation
+    else:
+        rotation_at = getattr(position.center, 'rotation_at')
+        if rotation_at is not None:
+            R = rotation_at(position.t)
+        else:
+            raise ValueError(_altaz_message)
+
+    position_au = mxv(R, position.position.au)
+    r_au, alt, az = to_spherical(position_au)
+
+    if temperature_C is None:
+        alt = Angle(radians=alt)
+    else:
+        refract = getattr(position.center, 'refract', None)
+        if refract is None:
+            raise ValueError(_altaz_message)
+        alt = position.center.refract(
+            alt * RAD2DEG, temperature_C, pressure_mbar,
+        )
+
+    return alt, Angle(radians=az), Distance(r_au)
+
 
 def compute(observer, zone, time, loc, filename):
     time = zone.localize(time)
@@ -111,7 +143,7 @@ def compute(observer, zone, time, loc, filename):
     obs = (earth + observer).at(t).observe(sun)
     #apparent = obs.apparent()
     apparent = compute_apparent(obs)
-    alt, az, distance = apparent.altaz()
+    alt, az, distance = altaz(apparent, None, "standard")
     radius_angle = Angle(radians=atan(solar_radius_km/distance.km))
     sun_alt = alt.degrees
     sun_az = az.degrees
