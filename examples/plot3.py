@@ -132,6 +132,43 @@ def altaz(position, temperature_C, pressure_mbar):
 
     return alt, Angle(radians=az), Distance(r_au)
 
+def deg_to_int(value, places=0):
+    """Decompose `value` into units, minutes, seconds, and second fractions.
+
+    This routine prepares a value for sexagesimal display, with its
+    seconds fraction expressed as an integer with `places` digits.  The
+    result is a tuple of five integers:
+
+    ``(sign [either +1 or -1], units, minutes, seconds, second_fractions)``
+
+    The integers are properly rounded per astronomical convention so
+    that, for example, given ``places=3`` the result tuple ``(1, 11, 22,
+    33, 444)`` means that the input was closer to 11u 22' 33.444" than
+    to either 33.443" or 33.445" in its value.
+
+    """
+    power = 10 ** places
+    n = int((power * 3600 * value + 0.5) // 1.0)
+    sign = np.sign(n)
+    n, fraction = divmod(abs(n), power)
+    n, seconds = divmod(n, 60)
+    n, minutes = divmod(n, 60)
+    return sign, n, minutes, seconds, fraction
+
+def rad_to_deg(value):
+    return value*180/pi
+
+def deg_to_str(value):
+    sign, d, m, s, sf = deg_to_int(value, 1)
+    if sign >= 0:
+        st = ""
+    else:
+        st = "-"
+
+    return f"{st}{d:02}deg {m:02}' {s:02}.{sf}\""
+
+def rad_to_str(value):
+    return deg_to_str(rad_to_deg(value))
 
 def compute(observer, zone, time, loc, filename):
     time = zone.localize(time)
@@ -144,25 +181,23 @@ def compute(observer, zone, time, loc, filename):
     #apparent = obs.apparent()
     apparent = compute_apparent(obs)
     alt, az, distance = altaz(apparent, None, "standard")
-    radius_angle = Angle(radians=asin(solar_radius_km/distance.km))
+    sun_r = asin(solar_radius_km/distance.km)
     sun_alt = alt.degrees
     sun_az = az.degrees
-    sun_r = radius_angle.degrees
     print("Sun:")
     print("Altitude (0-90):", alt)
     print("Azimuth (0-360): ", az)
-    print("Radius (deg):", radius_angle)
+    print("Radius (deg):", rad_to_str(sun_r))
     print()
     apparent = (earth + observer).at(t).observe(moon).apparent()
     alt, az, distance = apparent.altaz()
-    radius_angle = Angle(radians=asin(moon_radius_km/distance.km))
+    moon_r = asin(moon_radius_km/distance.km)
     moon_alt = alt.degrees
     moon_az = az.degrees
-    moon_r = radius_angle.degrees
     print("Moon:")
     print("Altitude (0-90):", alt)
     print("Azimuth (0-360): ", az)
-    print("Radius (deg):", radius_angle)
+    print("Radius (deg):", rad_to_str(moon_r))
     print()
     print()
     print()
@@ -172,9 +207,9 @@ def compute(observer, zone, time, loc, filename):
     #plot([sun_az], [sun_alt], "oy")
     #plot([moon_az], [moon_alt], ".k")
     ax = gca()
-    ax.add_patch(Circle((sun_az, sun_alt), sun_r,
+    ax.add_patch(Circle((sun_az, sun_alt), rad_to_deg(sun_r),
         ec="none", fc="orange", lw=0))
-    ax.add_patch(Circle((moon_az, moon_alt), moon_r,
+    ax.add_patch(Circle((moon_az, moon_alt), rad_to_deg(moon_r),
         ec="none", fc="k", lw=0))
     ax.set_aspect("equal")
     ax.xaxis.set_major_locator(ticker.MultipleLocator(1.0))
