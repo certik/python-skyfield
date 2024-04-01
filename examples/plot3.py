@@ -101,10 +101,7 @@ def compute_apparent(self):
     if v is not None:
         pass  # TODO: how to apply aberration and deflection to velocity?
 
-    apparent = Apparent(target_au, v, t, self.center, self.target)
-    apparent.center_barycentric = self.center_barycentric
-    apparent._observer_gcrs_au = observer_gcrs_au
-    return target_au, apparent.center_barycentric._altaz_rotation
+    return target_au, self.center_barycentric._altaz_rotation
 
 def length_of(xyz):
     """Given a 3-element array |xyz|, return its length.
