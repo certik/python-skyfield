@@ -94,7 +94,7 @@ def compute_apparent(cb, t, position, ephemeris, light_time):
 
     add_aberration(target_au, bcrs_velocity, light_time)
 
-    return target_au, cb._altaz_rotation
+    return target_au
 
 def length_of(xyz):
     """Given a 3-element array |xyz|, return its length.
@@ -180,7 +180,8 @@ def compute(observer, zone, time, loc, filename):
 
     obs = (earth + observer).at(t).observe(sun)
     #apparent = obs.apparent()
-    position, R = compute_apparent(obs.center_barycentric, obs.t,
+    R = obs.center_barycentric._altaz_rotation
+    position = compute_apparent(obs.center_barycentric, obs.t,
                         obs.position.au,
                         obs._ephemeris, obs.light_time)
     alt, az, distance = altaz(position, R)
@@ -193,7 +194,8 @@ def compute(observer, zone, time, loc, filename):
     print("Radius (deg):", rad_to_str(sun_r))
     print()
     obs = (earth + observer).at(t).observe(moon)
-    position, R = compute_apparent(obs.center_barycentric, obs.t,
+    R = obs.center_barycentric._altaz_rotation
+    position = compute_apparent(obs.center_barycentric, obs.t,
                         obs.position.au,
                         obs._ephemeris, obs.light_time)
     alt, az, distance = altaz(position, R)
