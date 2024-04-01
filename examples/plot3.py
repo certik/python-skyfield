@@ -104,7 +104,7 @@ def compute_apparent(self):
     apparent = Apparent(target_au, v, t, self.center, self.target)
     apparent.center_barycentric = self.center_barycentric
     apparent._observer_gcrs_au = observer_gcrs_au
-    return apparent.position.au, apparent.center_barycentric._altaz_rotation
+    return target_au, apparent.center_barycentric._altaz_rotation
 
 def length_of(xyz):
     """Given a 3-element array |xyz|, return its length.
