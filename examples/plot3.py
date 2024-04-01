@@ -1,5 +1,5 @@
 from datetime import datetime
-from math import atan, pi
+from math import atan, pi, asin
 import numpy as np
 from numpy import (abs, arcsin, arccos, arctan2, array, clip, cos,
                    minimum, pi, sin, sqrt, tan, where, zeros_like)
@@ -144,7 +144,7 @@ def compute(observer, zone, time, loc, filename):
     #apparent = obs.apparent()
     apparent = compute_apparent(obs)
     alt, az, distance = altaz(apparent, None, "standard")
-    radius_angle = Angle(radians=atan(solar_radius_km/distance.km))
+    radius_angle = Angle(radians=asin(solar_radius_km/distance.km))
     sun_alt = alt.degrees
     sun_az = az.degrees
     sun_r = radius_angle.degrees
@@ -155,7 +155,7 @@ def compute(observer, zone, time, loc, filename):
     print()
     apparent = (earth + observer).at(t).observe(moon).apparent()
     alt, az, distance = apparent.altaz()
-    radius_angle = Angle(radians=atan(moon_radius_km/distance.km))
+    radius_angle = Angle(radians=asin(moon_radius_km/distance.km))
     moon_alt = alt.degrees
     moon_az = az.degrees
     moon_r = radius_angle.degrees
