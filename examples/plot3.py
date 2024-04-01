@@ -147,7 +147,7 @@ def deg_to_str(value):
     else:
         st = "-"
 
-    return f"{st}{d:02}deg {m:02}' {s:02}.{sf}\""
+    return f"{st}{d:02}° {m:02}' {s:02}.{sf}\""
 
 def rad_to_str(value):
     return deg_to_str(rad_to_deg(value))
