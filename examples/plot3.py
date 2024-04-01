@@ -107,8 +107,7 @@ def compute_apparent(self):
 
 def altaz(position):
     """Compute (alt, az, distance) relative to the observer's horizon."""
-    cb = position.center_barycentric
-    R = cb._altaz_rotation
+    R = position.center_barycentric._altaz_rotation
     position_au = mxv(R, position.position.au)
     r_au, alt, az = to_spherical(position_au)
     return alt, az, Distance(r_au)
