@@ -79,11 +79,8 @@ def compute_limb_angle(position_au, observer_au):
 
     return limb_angle, nadir_angle
 
-def compute_apparent(cb, t, position, ephemeris, light_time):
+def compute_apparent(bcrs_position, bcrs_velocity, observer_gcrs_au, t, position, ephemeris, light_time):
     target_au = position.copy()
-    bcrs_position = cb.position.au
-    bcrs_velocity = cb.velocity.au_per_d
-    observer_gcrs_au = cb._observer_gcrs_au
 
     limb_angle, nadir_angle = compute_limb_angle(
         target_au, observer_gcrs_au)
@@ -181,9 +178,12 @@ def compute(observer, zone, time, loc, filename):
     obs = (earth + observer).at(t).observe(sun)
     #apparent = obs.apparent()
     R = obs.center_barycentric._altaz_rotation
-    position = compute_apparent(obs.center_barycentric, obs.t,
-                        obs.position.au,
-                        obs._ephemeris, obs.light_time)
+    position = compute_apparent(
+        obs.center_barycentric.position.au,
+        obs.center_barycentric.velocity.au_per_d,
+        obs.center_barycentric._observer_gcrs_au,
+        obs.t,
+        obs.position.au, obs._ephemeris, obs.light_time)
     alt, az, distance = altaz(position, R)
     sun_r = asin(solar_radius_km/(distance*AU_KM))
     sun_alt = rad_to_deg(alt)
@@ -195,9 +195,12 @@ def compute(observer, zone, time, loc, filename):
     print()
     obs = (earth + observer).at(t).observe(moon)
     R = obs.center_barycentric._altaz_rotation
-    position = compute_apparent(obs.center_barycentric, obs.t,
-                        obs.position.au,
-                        obs._ephemeris, obs.light_time)
+    position = compute_apparent(
+        obs.center_barycentric.position.au,
+        obs.center_barycentric.velocity.au_per_d,
+        obs.center_barycentric._observer_gcrs_au,
+        obs.t,
+        obs.position.au, obs._ephemeris, obs.light_time)
     alt, az, distance = altaz(position, R)
     moon_r = asin(moon_radius_km/(distance*AU_KM))
     moon_alt = rad_to_deg(alt)
