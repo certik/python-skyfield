@@ -16,7 +16,7 @@ from skyfield.positionlib import Apparent
 from skyfield.functions import dots
 from skyfield.functions import (
     _T, _to_array, _to_spherical_and_rates, angle_between, from_spherical,
-    length_of, mxm, mxv, rot_z, to_spherical,
+    length_of, mxm, mxv, rot_z,
 )
 from skyfield.constants import (AU_M, ANGVEL, DAY_S, DEG2RAD, ERAD,
                         IERS_2010_INVERSE_EARTH_FLATTENING, RAD2DEG, T0, tau)
@@ -104,6 +104,34 @@ def compute_apparent(self):
     apparent.center_barycentric = self.center_barycentric
     apparent._observer_gcrs_au = observer_gcrs_au
     return apparent
+
+def length_of(xyz):
+    """Given a 3-element array |xyz|, return its length.
+
+    The three elements can be simple scalars, or the array can be two
+    dimensions and offer three whole series of x, y, and z coordinates.
+
+    """
+    return sqrt((xyz * xyz).sum(axis=0))
+
+def to_spherical(xyz):
+    """Convert |xyz| to spherical coordinates (r,theta,phi).
+
+    ``r`` - vector length
+    ``theta`` - angle above (+) or below (-) the xy-plane
+    ``phi`` - angle around the z-axis
+
+    Note that ``theta`` is an elevation angle measured up and down from
+    the xy-plane, not a polar angle measured from the z-axis, to match
+    the convention for both latitude and declination.
+
+    """
+    r = length_of(xyz)
+    x, y, z = xyz
+    eps = np.finfo(np.float64).tiny
+    theta = arcsin(z / (r + eps))
+    phi = arctan2(y, x) % tau
+    return r, theta, phi
 
 def altaz(position, R):
     """Compute (alt, az, distance) relative to the observer's horizon.
