@@ -105,32 +105,13 @@ def compute_apparent(self):
     apparent._observer_gcrs_au = observer_gcrs_au
     return apparent
 
-def altaz(position, temperature_C, pressure_mbar):
+def altaz(position):
     """Compute (alt, az, distance) relative to the observer's horizon."""
     cb = position.center_barycentric
-    if cb is not None:
-        R = cb._altaz_rotation
-    else:
-        rotation_at = getattr(position.center, 'rotation_at')
-        if rotation_at is not None:
-            R = rotation_at(position.t)
-        else:
-            raise ValueError(_altaz_message)
-
+    R = cb._altaz_rotation
     position_au = mxv(R, position.position.au)
     r_au, alt, az = to_spherical(position_au)
-
-    if temperature_C is None:
-        alt = Angle(radians=alt)
-    else:
-        refract = getattr(position.center, 'refract', None)
-        if refract is None:
-            raise ValueError(_altaz_message)
-        alt = position.center.refract(
-            alt * RAD2DEG, temperature_C, pressure_mbar,
-        )
-
-    return alt, Angle(radians=az), Distance(r_au)
+    return alt, az, Distance(r_au)
 
 def deg_to_int(value, places=0):
     """Decompose `value` into units, minutes, seconds, and second fractions.
@@ -180,23 +161,23 @@ def compute(observer, zone, time, loc, filename):
     obs = (earth + observer).at(t).observe(sun)
     #apparent = obs.apparent()
     apparent = compute_apparent(obs)
-    alt, az, distance = altaz(apparent, None, "standard")
+    alt, az, distance = altaz(apparent)
     sun_r = asin(solar_radius_km/distance.km)
-    sun_alt = alt.degrees
-    sun_az = az.degrees
+    sun_alt = rad_to_deg(alt)
+    sun_az = rad_to_deg(az)
     print("Sun:")
-    print("Altitude (0-90):", alt)
-    print("Azimuth (0-360): ", az)
+    print("Altitude (0-90):", rad_to_str(alt))
+    print("Azimuth (0-360): ", rad_to_str(az))
     print("Radius (deg):", rad_to_str(sun_r))
     print()
     apparent = (earth + observer).at(t).observe(moon).apparent()
-    alt, az, distance = apparent.altaz()
+    alt, az, distance = altaz(apparent)
     moon_r = asin(moon_radius_km/distance.km)
-    moon_alt = alt.degrees
-    moon_az = az.degrees
+    moon_alt = rad_to_deg(alt)
+    moon_az = rad_to_deg(az)
     print("Moon:")
-    print("Altitude (0-90):", alt)
-    print("Azimuth (0-360): ", az)
+    print("Altitude (0-90):", rad_to_str(alt))
+    print("Azimuth (0-360): ", rad_to_str(az))
     print("Radius (deg):", rad_to_str(moon_r))
     print()
     print()
