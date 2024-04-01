@@ -105,10 +105,12 @@ def compute_apparent(self):
     apparent._observer_gcrs_au = observer_gcrs_au
     return apparent
 
-def altaz(position):
-    """Compute (alt, az, distance) relative to the observer's horizon."""
-    R = position.center_barycentric._altaz_rotation
-    position_au = mxv(R, position.position.au)
+def altaz(position, R):
+    """Compute (alt, az, distance) relative to the observer's horizon.
+    
+    `position` is in AU
+    """
+    position_au = mxv(R, position)
     r_au, alt, az = to_spherical(position_au)
     return alt, az, Distance(r_au)
 
@@ -160,7 +162,7 @@ def compute(observer, zone, time, loc, filename):
     obs = (earth + observer).at(t).observe(sun)
     #apparent = obs.apparent()
     apparent = compute_apparent(obs)
-    alt, az, distance = altaz(apparent)
+    alt, az, distance = altaz(apparent.position.au, apparent.center_barycentric._altaz_rotation)
     sun_r = asin(solar_radius_km/distance.km)
     sun_alt = rad_to_deg(alt)
     sun_az = rad_to_deg(az)
@@ -170,7 +172,7 @@ def compute(observer, zone, time, loc, filename):
     print("Radius (deg):", rad_to_str(sun_r))
     print()
     apparent = (earth + observer).at(t).observe(moon).apparent()
-    alt, az, distance = altaz(apparent)
+    alt, az, distance = altaz(apparent.position.au, apparent.center_barycentric._altaz_rotation)
     moon_r = asin(moon_radius_km/distance.km)
     moon_alt = rad_to_deg(alt)
     moon_az = rad_to_deg(az)
