@@ -104,7 +104,7 @@ def compute_apparent(self):
     apparent = Apparent(target_au, v, t, self.center, self.target)
     apparent.center_barycentric = self.center_barycentric
     apparent._observer_gcrs_au = observer_gcrs_au
-    return apparent
+    return apparent.position.au, apparent.center_barycentric._altaz_rotation
 
 def length_of(xyz):
     """Given a 3-element array |xyz|, return its length.
@@ -190,8 +190,8 @@ def compute(observer, zone, time, loc, filename):
 
     obs = (earth + observer).at(t).observe(sun)
     #apparent = obs.apparent()
-    apparent = compute_apparent(obs)
-    alt, az, distance = altaz(apparent.position.au, apparent.center_barycentric._altaz_rotation)
+    position, R = compute_apparent(obs)
+    alt, az, distance = altaz(position, R)
     sun_r = asin(solar_radius_km/(distance*AU_KM))
     sun_alt = rad_to_deg(alt)
     sun_az = rad_to_deg(az)
