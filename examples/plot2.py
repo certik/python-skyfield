@@ -1,5 +1,5 @@
 from datetime import datetime
-from math import atan, pi
+from math import atan, pi, asin
 import numpy as np
 from pytz import timezone
 from matplotlib.pylab import (plot, savefig, legend, grid, gca, scatter,
@@ -39,7 +39,7 @@ def compute(observer, zone, time, loc, filename):
     print()
     apparent = (earth + observer).at(t).observe(moon).apparent()
     alt, az, distance = apparent.altaz()
-    radius_angle = Angle(radians=atan(moon_radius_km/distance.km))
+    radius_angle = Angle(radians=asin(moon_radius_km/distance.km))
     moon_alt = alt.degrees
     moon_az = az.degrees
     moon_r = radius_angle.degrees
