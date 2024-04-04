@@ -168,7 +168,8 @@ def deg_to_str(value):
 def rad_to_str(value):
     return deg_to_str(rad_to_deg(value))
 
-def compute(observer, zone, time, loc, filename):
+def compute(observer, zone, time, loc, filename,
+        ref_pos=None):
     time = zone.localize(time)
     t = ts.from_datetime(time)
     print("Location:", loc)
@@ -188,6 +189,7 @@ def compute(observer, zone, time, loc, filename):
     sun_r = asin(solar_radius_km/(distance*AU_KM))
     sun_alt = rad_to_deg(alt)
     sun_az = rad_to_deg(az)
+    print(sun_alt, sun_az, sun_r)
     print("Sun:")
     print("Altitude (0-90):", rad_to_str(alt))
     print("Azimuth (0-360): ", rad_to_str(az))
@@ -205,6 +207,7 @@ def compute(observer, zone, time, loc, filename):
     moon_r = asin(moon_radius_km/(distance*AU_KM))
     moon_alt = rad_to_deg(alt)
     moon_az = rad_to_deg(az)
+    print(moon_alt, moon_az, moon_r)
     print("Moon:")
     print("Altitude (0-90):", rad_to_str(alt))
     print("Azimuth (0-360): ", rad_to_str(az))
@@ -212,6 +215,14 @@ def compute(observer, zone, time, loc, filename):
     print()
     print()
     print()
+    if ref_pos:
+        eps = 1e-16
+        assert abs(sun_alt-ref_pos[0]) < eps
+        assert abs(sun_az-ref_pos[1]) < eps
+        assert abs(sun_r-ref_pos[2]) < eps
+        assert abs(moon_alt-ref_pos[3]) < eps
+        assert abs(moon_az-ref_pos[4]) < eps
+        assert abs(moon_r-ref_pos[5]) < eps
 
 
     figure(figsize=(5,5))
@@ -243,14 +254,22 @@ compute(wgs84.latlon(35.90369476314685, -106.30851268194805, 2230),
 # https://eclipse2024.org/2023eclipse/eclipse-cities/city/28230.html
 compute(wgs84.latlon(35.90369476314685, -106.30851268194805, 2230),
         timezone('US/Mountain'), datetime(2023, 10, 14, 10, 36, 8),
-        "Los Alamos, NM", "e2.pdf")
+        "Los Alamos, NM", "e2.pdf",
+        [35.62384236539088, 137.39322269477546, 0.004666435109108667,
+         35.62491478656301, 137.40792969645054, 0.004415235323045712])
+
 
 # https://www.timeanddate.com/eclipse/in/@35.16789477316579,-106.58454895019533?iso=20231014
 compute(wgs84.latlon(35.16789477316579,-106.58454895019533, 1600),
         timezone('US/Mountain'), datetime(2023, 10, 14, 10, 37, 1),
-        "Albuquerque, NM", "e2b.pdf")
+        "Albuquerque, NM", "e2b.pdf",
+        [36.13290440870471, 136.97575208131278, 0.00466643734720691,
+         36.132703895971886, 136.9757657675733, 0.004415759291846439],
+        )
 
 # https://www.timeanddate.com/eclipse/in/@30.276139106760382,-98.872489929199233?iso=20240408
 compute(wgs84.latlon(30.274167, -98.871944, 516),
         timezone('US/Central'), datetime(2024, 4, 8, 13, 35, 10),
-        "Fredericksburg, TX", "e3.pdf")
+        "Fredericksburg, TX", "e3.pdf",
+        [67.31640064112162, 178.74688214701396, 0.0046479241546984506,
+         67.31763737226208, 178.74983743582982, 0.004908042955826713])
