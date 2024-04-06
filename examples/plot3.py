@@ -19,7 +19,8 @@ from skyfield.functions import (
     length_of, mxm, mxv, rot_z,
 )
 from skyfield.constants import (AU_M, ANGVEL, DAY_S, DEG2RAD, ERAD,
-                        IERS_2010_INVERSE_EARTH_FLATTENING, RAD2DEG, T0, tau)
+                        IERS_2010_INVERSE_EARTH_FLATTENING, RAD2DEG, T0, tau,
+                        C_AUDAY)
 from skyfield.units import Angle, AngleRate, Distance, Velocity, _interpret_angle
 
 
@@ -168,6 +169,46 @@ def deg_to_str(value):
 def rad_to_str(value):
     return deg_to_str(rad_to_deg(value))
 
+def correct_for_light_travel_time(observer, target):
+    """Return a light-time corrected astrometric position and velocity.
+
+    Given an `observer` that is a `Barycentric` position somewhere in
+    the solar system, compute where in the sky they will see the body
+    `target`, by computing the light-time between them and figuring out
+    where `target` was back when the light was leaving it that is now
+    reaching the eyes or instruments of the `observer`.
+
+    """
+    t = observer.t
+    ts = t.ts
+    whole = t.whole
+    tdb_fraction = t.tdb_fraction
+
+    cposition = observer.position.au
+    cvelocity = observer.velocity.au_per_d
+
+    tposition, tvelocity, gcrs_position, message = target._at(t)
+
+    distance = length_of(tposition - cposition)
+    light_time0 = 0.0
+    for i in range(10):
+        light_time = distance / C_AUDAY
+        delta = light_time - light_time0
+        if np.max(abs(delta), initial=0.0) < 1e-12:
+            break
+
+        # We assume a light travel time of at most a couple of days.  A
+        # longer light travel time would best be split into a whole and
+        # fraction, for adding to the whole and fraction of TDB.
+        t2 = ts.tdb_jd(whole, tdb_fraction - light_time)
+
+        tposition, tvelocity, gcrs_position, message = target._at(t2)
+        distance = length_of(tposition - cposition)
+        light_time0 = light_time
+    else:
+        raise ValueError('light-travel time failed to converge')
+    return tposition - cposition, tvelocity - cvelocity, t, light_time
+
 def observe(self, body):
     """Compute the `Astrometric` position of a body from this location.
 
@@ -183,7 +224,7 @@ def observe(self, body):
     <Astrometric ICRS position and velocity at date t center=399 target=499>
 
     """
-    p, v, t, light_time = body._observe_from_bcrs(self)
+    p, v, t, light_time = correct_for_light_travel_time(self, body)
     astrometric = Astrometric(p, v, t, self.target, body.target)
     astrometric._ephemeris = self._ephemeris
     astrometric.center_barycentric = self
