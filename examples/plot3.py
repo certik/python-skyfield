@@ -12,7 +12,7 @@ import matplotlib.ticker as ticker
 from skyfield.api import load, wgs84
 from skyfield.units import Angle
 from skyfield.relativity import add_aberration, add_deflection
-from skyfield.positionlib import Apparent
+from skyfield.positionlib import Apparent, Astrometric
 from skyfield.functions import dots
 from skyfield.functions import (
     _T, _to_array, _to_spherical_and_rates, angle_between, from_spherical,
@@ -168,6 +168,29 @@ def deg_to_str(value):
 def rad_to_str(value):
     return deg_to_str(rad_to_deg(value))
 
+def observe(self, body):
+    """Compute the `Astrometric` position of a body from this location.
+
+    To compute the body's astrometric position, it is first asked
+    for its position at the time `t` of this position itself.  The
+    distance to the body is then divided by the speed of light to
+    find how long it takes its light to arrive.  Finally, the light
+    travel time is subtracted from `t` and the body is asked for a
+    series of increasingly exact positions to learn where it was
+    when it emitted the light that is now reaching this position.
+
+    >>> earth.at(t).observe(mars)
+    <Astrometric ICRS position and velocity at date t center=399 target=499>
+
+    """
+    p, v, t, light_time = body._observe_from_bcrs(self)
+    astrometric = Astrometric(p, v, t, self.target, body.target)
+    astrometric._ephemeris = self._ephemeris
+    astrometric.center_barycentric = self
+    astrometric.light_time = light_time
+    return astrometric
+
+
 def compute(observer, zone, time, loc, filename,
         ref_pos=None):
     time = zone.localize(time)
@@ -176,7 +199,8 @@ def compute(observer, zone, time, loc, filename,
     print(observer)
     print("Time:", t.astimezone(zone))
 
-    obs = (earth + observer).at(t).observe(sun)
+    at = (earth + observer).at(t)
+    obs = observe(at, sun)
     #apparent = obs.apparent()
     R = obs.center_barycentric._altaz_rotation
     position = compute_apparent(
