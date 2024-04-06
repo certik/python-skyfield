@@ -12,7 +12,7 @@ import matplotlib.ticker as ticker
 from skyfield.api import load, wgs84
 from skyfield.units import Angle
 from skyfield.relativity import add_aberration, add_deflection
-from skyfield.positionlib import Apparent, Astrometric
+from skyfield.positionlib import Apparent, Astrometric, build_position
 from skyfield.functions import dots
 from skyfield.functions import (
     _T, _to_array, _to_spherical_and_rates, angle_between, from_spherical,
@@ -22,6 +22,7 @@ from skyfield.constants import (AU_M, ANGVEL, DAY_S, DEG2RAD, ERAD,
                         IERS_2010_INVERSE_EARTH_FLATTENING, RAD2DEG, T0, tau,
                         C_AUDAY)
 from skyfield.units import Angle, AngleRate, Distance, Velocity, _interpret_angle
+from skyfield.timelib import Time
 
 
 
@@ -231,6 +232,30 @@ def observe(self, body):
     astrometric.light_time = light_time
     return astrometric
 
+def at(self, t):
+    """At time ``t``, compute the target's position relative to the center.
+
+    If ``t`` is an array of times, then the returned position object
+    will specify as many positions as there were times.  The kind of
+    position returned depends on the value of the ``center``
+    attribute:
+
+    * Solar System Barycenter: :class:`~skyfield.positionlib.Barycentric`
+    * Center of the Earth: :class:`~skyfield.positionlib.Geocentric`
+    * Anything else: :class:`~skyfield.positionlib.ICRF`
+
+    """
+    if not isinstance(t, Time):
+        raise ValueError('please provide the at() method with a Time'
+                            ' instance as its argument, instead of the'
+                            ' value {0!r}'.format(t))
+    p, v, gcrs_position, message = self._at(t)
+    center = self.center
+    position = build_position(p, v, t, center, self.target)
+    position._ephemeris = self.ephemeris
+    position._observer_gcrs_au = gcrs_position
+    position.message = message
+    return position
 
 def compute(observer, zone, time, loc, filename,
         ref_pos=None):
@@ -240,8 +265,8 @@ def compute(observer, zone, time, loc, filename,
     print(observer)
     print("Time:", t.astimezone(zone))
 
-    at = (earth + observer).at(t)
-    obs = observe(at, sun)
+    at_result = at(earth + observer, t)
+    obs = observe(at_result, sun)
     #apparent = obs.apparent()
     R = obs.center_barycentric._altaz_rotation
     position = compute_apparent(
