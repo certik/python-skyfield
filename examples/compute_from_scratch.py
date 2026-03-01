@@ -737,7 +737,8 @@ def compute_altaz(kernel, lat_deg, lon_deg, elev_m,
     R_altaz = altaz_rotation(lat_rad, lon_rad, R_itrs)
 
     # ── Compute for Sun ──
-    solar_radius_km = 696340.0
+    # IAU 2015 solar radius (used by JPL Horizons)
+    solar_radius_km = 695700.0
 
     sun_astro, sun_astro_vel, sun_lt = correct_for_light_travel_time(
         obs_bcrs_pos, obs_bcrs_vel, kernel, jd_whole, tdb_frac,
@@ -755,10 +756,12 @@ def compute_altaz(kernel, lat_deg, lon_deg, elev_m,
     # Convert to alt-az
     sun_altaz = R_altaz @ sun_apparent
     sun_dist, sun_alt, sun_az = to_spherical(sun_altaz)
-    sun_radius = np.arcsin(solar_radius_km / (sun_dist * AU_KM))
+    sun_ang_diam = 2.0 * np.arcsin(solar_radius_km / (sun_dist * AU_KM))
+    sun_ang_diam_arcsec = np.degrees(sun_ang_diam) * 3600.0
 
     # ── Compute for Moon ──
-    moon_radius_km = 1737.1
+    # IAU moon radius (used by JPL Horizons)
+    moon_radius_km = 1737.4
 
     moon_astro, moon_astro_vel, moon_lt = correct_for_light_travel_time(
         obs_bcrs_pos, obs_bcrs_vel, kernel, jd_whole, tdb_frac,
@@ -774,7 +777,8 @@ def compute_altaz(kernel, lat_deg, lon_deg, elev_m,
 
     moon_altaz = R_altaz @ moon_apparent
     moon_dist, moon_alt, moon_az = to_spherical(moon_altaz)
-    moon_radius = np.arcsin(moon_radius_km / (moon_dist * AU_KM))
+    moon_ang_diam = 2.0 * np.arcsin(moon_radius_km / (moon_dist * AU_KM))
+    moon_ang_diam_arcsec = np.degrees(moon_ang_diam) * 3600.0
 
     # ── Print results ──
     sun_alt_deg = np.degrees(sun_alt)
@@ -783,16 +787,18 @@ def compute_altaz(kernel, lat_deg, lon_deg, elev_m,
     moon_az_deg = np.degrees(moon_az)
 
     print(f"\nSun:")
-    print(f"  Altitude: {sun_alt_deg:.15f}°")
-    print(f"  Azimuth:  {sun_az_deg:.15f}°")
-    print(f"  Radius:   {sun_radius:.16f} rad")
+    print(f"  Altitude:  {sun_alt_deg:.6f}°")
+    print(f"  Azimuth:   {sun_az_deg:.6f}°")
+    print(f"  Ang-diam:  {sun_ang_diam_arcsec:.3f}\"")
+    print(f"  delta:     {sun_dist:.14f} AU")
     print(f"Moon:")
-    print(f"  Altitude: {moon_alt_deg:.15f}°")
-    print(f"  Azimuth:  {moon_az_deg:.15f}°")
-    print(f"  Radius:   {moon_radius:.16f} rad")
+    print(f"  Altitude:  {moon_alt_deg:.6f}°")
+    print(f"  Azimuth:   {moon_az_deg:.6f}°")
+    print(f"  Ang-diam:  {moon_ang_diam_arcsec:.3f}\"")
+    print(f"  delta:     {moon_dist:.14f} AU")
 
-    return (sun_alt_deg, sun_az_deg, sun_radius,
-            moon_alt_deg, moon_az_deg, moon_radius)
+    return (sun_alt_deg, sun_az_deg, sun_ang_diam_arcsec, sun_dist,
+            moon_alt_deg, moon_az_deg, moon_ang_diam_arcsec, moon_dist)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -804,39 +810,53 @@ if __name__ == '__main__':
                                    'de440s.bsp'))
 
     print("=" * 65)
-    print("Fredericksburg, TX — April 8, 2024 Total Solar Eclipse")
+    print("40°N, Greenwich — 2025 January 1, 12:00 UTC")
     print("=" * 65)
 
     result = compute_altaz(
         kernel,
-        lat_deg=30.274167, lon_deg=-98.871944, elev_m=516,
-        utc_year=2024, utc_month=4, utc_day=8,
-        utc_hour=13, utc_minute=35, utc_second=10,
-        tz_offset_hours=-5,   # CDT = UTC-5
-        delta_t=69.19475503,  # TT - UT1 (seconds), from IERS data
-        leap_seconds=37,      # TAI - UTC for 2024
+        lat_deg=40.0, lon_deg=0.0, elev_m=0,
+        utc_year=2025, utc_month=1, utc_day=1,
+        utc_hour=12, utc_minute=0, utc_second=0,
+        tz_offset_hours=0,    # UTC
+        delta_t=69.14980035,  # TT - UT1 (seconds), from IERS data
+        leap_seconds=37,      # TAI - UTC for 2025
     )
 
-    # ── Validate against Skyfield reference values ──
-    ref = (67.31640064112162, 178.74688214701396, 0.0046479241546984506,
-           67.31763737226208, 178.74983743582982, 0.004908042955826713)
+    # ── Validate against JPL Horizons (DE441) reference values ──
+    # Horizons uses DE441, we use DE440s — small differences expected in
+    # position due to different ephemeris and EOP data. Angular diameters
+    # should match closely since they depend mainly on distance and radii.
+    horizons = {
+        'Sun alt':       (result[0], 27.036034),
+        'Sun az':        (result[1], 179.049603),
+        'Sun Ang-diam':  (result[2], 1950.991),
+        'Sun delta':     (result[3], 0.98332708143732),
+        'Moon alt':      (result[4], 21.518703),
+        'Moon az':       (result[5], 157.820214),
+        'Moon Ang-diam': (result[6], 1897.634),
+        'Moon delta':    (result[7], 0.00252475127904),
+    }
 
     print("\n" + "=" * 65)
-    print("Validation against Skyfield")
+    print("Comparison with JPL Horizons (DE441)")
     print("=" * 65)
-    labels = ['Sun alt', 'Sun az', 'Sun radius',
-              'Moon alt', 'Moon az', 'Moon radius']
-    all_pass = True
-    for label, computed, expected in zip(labels, result, ref):
-        diff = abs(computed - expected)
-        ok = "✓" if diff < 1e-10 else "✗"
-        if diff >= 1e-10:
-            all_pass = False
-        print(f"  {ok} {label:12s}: diff = {diff:.2e}")
+    for label, (computed, expected) in horizons.items():
+        diff = computed - expected
+        adiff = abs(diff)
+        if 'diam' in label:
+            unit = '"'
+            print(f"  {label:16s}: {computed:12.3f}  Horizons: {expected:12.3f}  diff: {diff:+.3f}{unit}")
+        elif 'delta' in label:
+            unit = ' AU'
+            print(f"  {label:16s}: {computed:.14f}  Horizons: {expected:.14f}  diff: {diff:+.2e}{unit}")
+        else:
+            unit = '°'
+            print(f"  {label:16s}: {computed:12.6f}  Horizons: {expected:12.6f}  diff: {diff:+.6f}{unit} ({adiff*3600:.3f}\")")
 
-    if all_pass:
-        print("\n  All values match Skyfield! ✓")
-    else:
-        print("\n  Some values differ — debugging needed.")
+    print()
+    print("  Note: Horizons uses DE441 ephemeris + its own EOP data.")
+    print("  We use DE440s + a single delta_T value. Small alt/az")
+    print("  differences (~0.1\") are expected from these sources.")
 
     kernel.close()
