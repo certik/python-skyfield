@@ -1,0 +1,14 @@
+[project]
+name = "skyfield-examples"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "matplotlib",
+    "scipy",
+    "pytz",
+    "skyfield",
+]
+
+[tool.uv.sources]
+skyfield = { path = "..", editable = true }
