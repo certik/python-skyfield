@@ -801,7 +801,7 @@ def compute_altaz(kernel, lat_deg, lon_deg, elev_m,
 
 if __name__ == '__main__':
     kernel = SPK.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                   'de421.bsp'))
+                                   'de440s.bsp'))
 
     print("=" * 65)
     print("Fredericksburg, TX — April 8, 2024 Total Solar Eclipse")

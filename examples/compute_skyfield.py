@@ -15,7 +15,7 @@ from skyfield.api import load, wgs84
 SOLAR_RADIUS_KM = 696340.0
 MOON_RADIUS_KM = 1737.1
 
-eph = load('de421.bsp')
+eph = load('de440s.bsp')
 earth, sun, moon = eph['earth'], eph['sun'], eph['moon']
 ts = load.timescale()
 
