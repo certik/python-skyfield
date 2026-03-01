@@ -86,3 +86,30 @@ uv run venus_evening_chart.py
 ```
 
 **Output:** `venus_morning_chart.png`
+
+---
+
+### `compute_from_scratch.py` — Positions from First Principles
+
+Computes Sun and Moon altitude/azimuth by reading the DE421.bsp binary
+ephemeris directly (via `jplephem`) and implementing all coordinate
+transformations from scratch:
+
+- UTC → TT → TDB time scale conversions
+- IAU 2000A precession and nutation
+- ICRS-to-J2000 bias, Earth rotation angle, sidereal time (GMST/GAST)
+- WGS84 → ITRS → GCRS observer position
+- Light-travel-time correction (iterative)
+- Gravitational light deflection (Sun, Jupiter, Saturn, Earth)
+- Stellar aberration (relativistic)
+- Horizon (alt/az) coordinate conversion
+
+Results are validated to agree with Skyfield to machine precision (~10⁻¹¹°).
+
+```bash
+uv run compute_from_scratch.py
+```
+
+**Output:** Prints Sun and Moon positions for the April 8, 2024 total solar
+eclipse as seen from Fredericksburg, TX, with validation against reference
+values.
