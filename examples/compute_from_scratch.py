@@ -18,8 +18,15 @@ The results must agree exactly with Skyfield's computation chain.
 import numpy as np
 from numpy import (sin, cos, sqrt, arcsin, arctan2, arccos, fmod, dot,
                    einsum, zeros, array, where, abs, minimum, clip, outer)
-from jplephem.spk import SPK
 import os
+import sys
+
+# SPK backend: use --pure flag or SPK_BACKEND=pure for the pure-Python reader
+_use_pure = ('--pure' in sys.argv) or (os.environ.get('SPK_BACKEND') == 'pure')
+if _use_pure:
+    from spk_reader import SPK
+else:
+    from jplephem.spk import SPK
 
 # ═══════════════════════════════════════════════════════════════════════
 #  Constants
@@ -806,11 +813,14 @@ def compute_altaz(kernel, lat_deg, lon_deg, elev_m,
 # ═══════════════════════════════════════════════════════════════════════
 
 if __name__ == '__main__':
-    kernel = SPK.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                   'de440s.bsp'))
+    backend = 'spk_reader (pure Python)' if _use_pure else 'jplephem'
+    bsp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            'de440s.bsp')
+    kernel = SPK.open(bsp_path)
 
     print("=" * 65)
     print("40°N, Greenwich — 2025 January 1, 12:00 UTC")
+    print(f"SPK backend: {backend}")
     print("=" * 65)
 
     result = compute_altaz(
