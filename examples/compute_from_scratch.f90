@@ -1266,6 +1266,7 @@ program compute_from_scratch
   ! Horizons reference
   real(dp) :: diff_val
   character(len=256) :: exe_dir
+  character(len=256) :: bsp_file
   integer :: slen
 
   ! Get directory of this executable (for data files)
@@ -1279,8 +1280,14 @@ program compute_from_scratch
   end if
 
   ! Load data files
+  call get_command_argument(1, bsp_file)
+  if (len_trim(bsp_file) == 0) bsp_file = 'de440s.bsp'
   call load_nutation(trim(exe_dir) // 'nutation.dat')
-  call spk_open(trim(exe_dir) // 'de440s.bsp', kernel)
+  if (index(trim(bsp_file), '/') > 0) then
+    call spk_open(trim(bsp_file), kernel)
+  else
+    call spk_open(trim(exe_dir) // trim(bsp_file), kernel)
+  end if
 
   ! ── Test case parameters ──
   lat_deg = 40.0_dp
@@ -1294,6 +1301,7 @@ program compute_from_scratch
   print '(A)', '================================================================='
   print '(A)', '40 N, Greenwich -- 2025 January 1, 12:00 UTC'
   print '(A)', 'SPK backend: Fortran (pure)'
+  print '(A,A)', 'SPK file: ', trim(bsp_file)
   print '(A)', '================================================================='
 
   ! ── Time conversions ──
