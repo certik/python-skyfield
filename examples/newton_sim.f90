@@ -587,7 +587,7 @@ program newton_sim
   integer, parameter :: INTERVAL_DAYS(NSEG) = [8,16,16,32,32,32,32,32,16,4,4]
   integer, parameter :: NCOEFFS(NSEG) = [14,10,13,11,8,7,6,6,11,13,13]
 
-  real(dp), parameter :: START_JD = 2455197.5_dp
+  real(dp), parameter :: START_JD = 2415020.5_dp
   real(dp), parameter :: TARGET_END_JD = 2462502.5_dp
   real(dp), parameter :: DT_DAY = 0.125_dp
 
