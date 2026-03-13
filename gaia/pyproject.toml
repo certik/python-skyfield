@@ -1,0 +1,11 @@
+[project]
+name = "gaia"
+version = "0.1.0"
+description = "Use Gaia catalog"
+requires-python = ">=3.12"
+dependencies = [
+    "astroquery",
+    "matplotlib",
+    "pandas",
+    "numpy",
+]
