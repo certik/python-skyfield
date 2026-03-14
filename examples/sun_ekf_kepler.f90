@@ -1,5 +1,5 @@
 ! ═══════════════════════════════════════════════════════════════════════
-! sun_ekf.f90 — 2-body Sun-Earth EKF with N-body propagation
+! sun_ekf.f90 — 2-body Sun-Earth EKF with Keplerian Elements
 ! ═══════════════════════════════════════════════════════════════════════
 !
 ! State vector: x = [e, i, Ω, ω, M₀, μ]  (6 elements, all constant)
@@ -15,8 +15,6 @@
 !   R_E  = Earth radius (6378.137 km)
 !
 ! Dynamics: F = I (elements are constants of motion in 2-body)
-! Propagation: Yoshida 4th-order N-body integrator (N=2)
-!   Elements → Cartesian at epoch → propagate → alt/az
 ! Observations: Sun alt/az from observations.dat
 ! Filter: EKF with finite-difference Jacobian
 !
@@ -316,84 +314,11 @@ contains
 
 end module obs_reader_mod
 
-! ─── Module 4: N-body dynamics (Yoshida 4th-order) ──────────────────
-module nbody2_mod
-  use constants_mod
-  implicit none
-  integer, parameter :: NB = 2   ! Sun, Earth
-
-  ! Yoshida 4th-order symplectic coefficients
-  real(dp), parameter :: W0_Y = -(2.0_dp ** (1.0_dp/3.0_dp)) / &
-      (2.0_dp - 2.0_dp ** (1.0_dp/3.0_dp))
-  real(dp), parameter :: W1_Y = 1.0_dp / (2.0_dp - 2.0_dp ** (1.0_dp/3.0_dp))
-  real(dp), parameter :: C1_Y = 0.5_dp * W1_Y
-  real(dp), parameter :: C4_Y = C1_Y
-  real(dp), parameter :: C2_Y = 0.5_dp * (W0_Y + W1_Y)
-  real(dp), parameter :: C3_Y = C2_Y
-  real(dp), parameter :: D1_Y = W1_Y
-  real(dp), parameter :: D2_Y = W0_Y
-  real(dp), parameter :: D3_Y = W1_Y
-
-contains
-
-  subroutine compute_acc_nb(pos, gm, acc)
-    real(dp), intent(in)  :: pos(NB,3), gm(NB)
-    real(dp), intent(out) :: acc(NB,3)
-    real(dp) :: r(3), r2, rinv3
-
-    acc = 0.0_dp
-    r = pos(2,:) - pos(1,:)
-    r2 = dot_product(r, r)
-    rinv3 = 1.0_dp / (r2 * sqrt(r2))
-    acc(1,:) =  gm(2) * r * rinv3
-    acc(2,:) = -gm(1) * r * rinv3
-  end subroutine
-
-  subroutine yoshida4_step_nb(pos, vel, gm, dt)
-    real(dp), intent(inout) :: pos(NB,3), vel(NB,3)
-    real(dp), intent(in)    :: gm(NB), dt
-    real(dp) :: acc(NB,3)
-
-    pos = pos + C1_Y * dt * vel
-    call compute_acc_nb(pos, gm, acc)
-    vel = vel + D1_Y * dt * acc
-
-    pos = pos + C2_Y * dt * vel
-    call compute_acc_nb(pos, gm, acc)
-    vel = vel + D2_Y * dt * acc
-
-    pos = pos + C3_Y * dt * vel
-    call compute_acc_nb(pos, gm, acc)
-    vel = vel + D3_Y * dt * acc
-
-    pos = pos + C4_Y * dt * vel
-  end subroutine
-
-  subroutine propagate_nbody(pos, vel, gm, dt_total)
-    real(dp), intent(inout) :: pos(NB,3), vel(NB,3)
-    real(dp), intent(in)    :: gm(NB), dt_total
-    real(dp) :: dt_step
-    integer :: n_steps, i
-
-    ! 3-hour max sub-steps for stability
-    dt_step = sign(min(abs(dt_total), 10800.0_dp), dt_total)
-    n_steps = max(1, nint(abs(dt_total) / abs(dt_step)))
-    dt_step = dt_total / real(n_steps, dp)
-
-    do i = 1, n_steps
-      call yoshida4_step_nb(pos, vel, gm, dt_step)
-    end do
-  end subroutine
-
-end module nbody2_mod
-
-! ─── Module 5: Keplerian elements + observation model ────────────────
+! ─── Module 4: Keplerian elements + observation model ────────────────
 module kepler_obs_mod
   use constants_mod
-  use nbody2_mod, only: NB, propagate_nbody
   implicit none
   integer, parameter :: NS = 6   ! EKF state dimension
-  real(dp), parameter :: GM_EARTH_KNOWN = 398600.435507_dp  ! fixed split
 
 contains
 
@@ -687,9 +612,8 @@ contains
     real(dp), intent(out) :: alt_deg, az_deg
 
     real(dp) :: ecc, inc, raan_v, argp_v, M0, mu
-    real(dp) :: dt_s
-    real(dp) :: r_rel(3), v_rel(3), r_sun(3), v_earth(3)
-    real(dp) :: pos_nb(NB,3), vel_nb(NB,3), gm_nb(NB), gm_s
+    real(dp) :: n_mean, M_now, dt_s
+    real(dp) :: r_eq(3), v_eq(3), r_sun(3)
     real(dp) :: d_gcrs(3), d_date(3), d_itrs(3), d_local(3)
     real(dp) :: obs_itrs(3), obs_date(3), obs_gcrs(3)
     real(dp) :: lat, lon, sinlat, coslat, slon, clon
@@ -704,25 +628,16 @@ contains
     ecc = x(1); inc = x(2); raan_v = x(3)
     argp_v = x(4); M0 = x(5); mu = x(6)
 
-    ! Convert elements at epoch to Cartesian (Earth relative to Sun)
-    call kepler_to_cart(a_fixed, ecc, inc, raan_v, argp_v, M0, mu, r_rel, v_rel)
-
-    ! Set up N-body initial conditions (barycentric frame)
-    gm_s = mu - GM_EARTH_KNOWN
-    pos_nb(1,:) = -(GM_EARTH_KNOWN / mu) * r_rel   ! Sun
-    vel_nb(1,:) = -(GM_EARTH_KNOWN / mu) * v_rel
-    pos_nb(2,:) =  (gm_s / mu) * r_rel              ! Earth
-    vel_nb(2,:) =  (gm_s / mu) * v_rel
-    gm_nb(1) = gm_s
-    gm_nb(2) = GM_EARTH_KNOWN
-
-    ! Propagate from epoch to observation time
+    ! Mean motion and mean anomaly at observation time
+    n_mean = sqrt(mu / a_fixed**3)
     dt_s = (jd_obs - t_epoch) * DAY_S
-    call propagate_nbody(pos_nb, vel_nb, gm_nb, dt_s)
+    M_now = M0 + n_mean * dt_s
 
-    ! Sun geocentric position and Earth velocity
-    r_sun   = pos_nb(1,:) - pos_nb(2,:)
-    v_earth = vel_nb(2,:)
+    ! Keplerian → Cartesian (Earth relative to Sun, J2000)
+    call kepler_to_cart(a_fixed, ecc, inc, raan_v, argp_v, M_now, mu, r_eq, v_eq)
+
+    ! Sun geocentric position = -(Earth relative to Sun)
+    r_sun = -r_eq
 
     ! --- Coordinate transformations (same as kalman_sim.f90) ---
     lat = lat_deg * DEG2RAD
@@ -757,7 +672,7 @@ contains
     d_gcrs = r_sun - obs_gcrs
 
     ! Aberration (first-order): Earth velocity / c
-    v_obs = v_earth / C_LIGHT_KMS
+    v_obs = v_eq / C_LIGHT_KMS
     dnorm = sqrt(sum(d_gcrs**2))
     if (dnorm > 1.0d-10) then
       d_unit = d_gcrs / dnorm
@@ -861,7 +776,7 @@ program sun_ekf
   lon_obs = 0.0_dp
 
   print '(A)', '════════════════════════════════════════════════════════'
-  print '(A)', '  2-Body Sun-Earth EKF (N-body propagation)'
+  print '(A)', '  2-Body Sun-Earth EKF with Keplerian Elements'
   print '(A,F8.4,A,F8.4)', '  Observer: lat=', lat_obs, ' lon=', lon_obs
   print '(A)', '════════════════════════════════════════════════════════'
 
