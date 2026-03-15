@@ -866,6 +866,19 @@ program sun_ekf
   print '(A)', '  2-Body Sun-Earth EKF (N-body propagation)'
   print '(A,F8.4,A,F8.4)', '  Observer: lat=', lat_obs, ' lon=', lon_obs
   print '(A)', '════════════════════════════════════════════════════════'
+  print '(A)', ''
+  print '(A)', '  State vector: x = [e, i, Omega, omega, M0, mu, a]'
+  print '(A)', '    e     = eccentricity (0 = circle, 1 = parabola)'
+  print '(A)', '    i     = inclination of orbit to equator (deg)'
+  print '(A)', '            (should recover obliquity ~23.44 deg)'
+  print '(A)', '    Omega = longitude of ascending node (deg)'
+  print '(A)', '            (where orbit crosses equator going north)'
+  print '(A)', '    omega = argument of periapsis (deg)'
+  print '(A)', '            (angle from ascending node to closest approach)'
+  print '(A)', '    M0    = mean anomaly at epoch (deg)'
+  print '(A)', '            (linearized orbital phase at reference time)'
+  print '(A)', '    mu    = gravitational parameter GM_sun + GM_earth (km^3/s^2)'
+  print '(A)', '    a     = semi-major axis of orbit (km)'
 
   ! ── 1. Read all observations, extract Sun-only ──
   call read_observations('observations.dat', obs_all, n_obs_all, 1.0d10)
@@ -958,6 +971,7 @@ program sun_ekf
   ! ── 4. Initialize EKF ──
   x = x_init
 
+  ! Initial covariance (1-sigma uncertainties on diagonal)
   P_cov = 0.0_dp
   P_cov(1,1) = (0.005_dp)**2             ! sigma_e = 0.005
   P_cov(2,2) = (3.0_dp * DEG2RAD)**2     ! sigma_i = 3 deg
@@ -967,12 +981,26 @@ program sun_ekf
   P_cov(6,6) = (0.01_dp * mu_total)**2   ! sigma_mu = 1%
   P_cov(7,7) = (0.01_dp * a_comp)**2     ! sigma_a = 1% (~1.5M km)
 
+  print '(/,A)', '  Initial 1-sigma uncertainties:'
+  print '(A,F10.6)',     '    sigma_e     = ', sqrt(P_cov(1,1))
+  print '(A,F8.4,A)',    '    sigma_i     = ', sqrt(P_cov(2,2))*RAD2DEG, ' deg'
+  print '(A,F8.4,A)',    '    sigma_Omega = ', sqrt(P_cov(3,3))*RAD2DEG, ' deg'
+  print '(A,F8.4,A)',    '    sigma_omega = ', sqrt(P_cov(4,4))*RAD2DEG, ' deg'
+  print '(A,F8.4,A)',    '    sigma_M0    = ', sqrt(P_cov(5,5))*RAD2DEG, ' deg'
+  print '(A,ES10.3,A,F6.3,A)', '    sigma_mu    = ', sqrt(P_cov(6,6)), &
+       '  (', sqrt(P_cov(6,6))/mu_total*100.0_dp, '%)'
+  print '(A,ES10.3,A,F6.3,A)', '    sigma_a     = ', sqrt(P_cov(7,7)), &
+       '  (', sqrt(P_cov(7,7))/a_comp*100.0_dp, '%)'
+
   Q_noise = 0.0_dp   ! elements are constant in 2-body
 
   sigma_obs = 60.0_dp / 3600.0_dp   ! 60 arcsec in degrees
   R_noise = 0.0_dp
   R_noise(1,1) = sigma_obs**2
   R_noise(2,2) = sigma_obs**2
+
+  print '(A,F6.1,A)',    '    sigma_obs   = ', sigma_obs * 3600.0_dp, &
+       ' arcsec (measurement noise, alt & az)'
 
   ! FD perturbation sizes
   delta(1) = 1.0d-7             ! e
@@ -990,6 +1018,17 @@ program sun_ekf
 
   ! ── 5. EKF loop ──
   print '(/,A)', '  Running EKF...'
+  print '(A)', ''
+  print '(A)', '  Column definitions:'
+  print '(A)', '    Obs#     = observation number (cumulative)'
+  print '(A)', '    cumRMSa" = cumulative RMS of altitude residuals (arcsec)'
+  print '(A)', '    cumRMSz" = cumulative RMS of azimuth residuals (arcsec)'
+  print '(A)', '    winRMSa" = windowed RMS of altitude residuals, last 200 obs (arcsec)'
+  print '(A)', '    winRMSz" = windowed RMS of azimuth residuals, last 200 obs (arcsec)'
+  print '(A)', '    e_err%   = relative error in eccentricity vs true (%)'
+  print '(A)', '    i_err(d) = error in inclination vs true (degrees)'
+  print '(A)', '    mu_err%  = relative error in mu vs true (%)'
+  print '(A)', '    a_err%   = relative error in semi-major axis vs true (%)'
   print '(A)', '  ──────────────────────────────────────────────────────────────────────────'
   print '(A)', '   Obs#  cumRMSa" cumRMSz"  winRMSa"  winRMSz"  e_err%   i_err(d) mu_err%  a_err%'
 
