@@ -894,6 +894,9 @@ program sun_ekf_3body
   real(dp) :: gm_earth_est, gm_sun_est
   real(dp) :: corr_mat(NS,NS), sig_i_v, sig_j_v
   character(len=7) :: param_names(NS)
+  real(dp) :: Q_rate(NS)   ! process noise rate (state²/day)
+  integer :: iter
+  integer, parameter :: N_ITER = 5   ! outer iterations
 
   ! ═══════════════════════════════════════════════════
   lat_obs = 40.0_dp
@@ -1035,14 +1038,14 @@ program sun_ekf_3body
   x_init(4)  = x_true(4)  + 5.0_dp * DEG2RAD   ! w_E: +5 deg
   x_init(5)  = x_true(5)  + 3.0_dp * DEG2RAD   ! M0_E: +3 deg
   x_init(6)  = x_true(6)  * 1.005_dp            ! mu_SE: +0.5%
-  x_init(7)  = x_true(7)                        ! a_E: correct value
+  x_init(7)  = x_true(7) * 1.10_dp               ! a_E: +10%
   x_init(8)  = x_true(8)  * 1.20_dp             ! e_M: +20%
   x_init(9)  = x_true(9)  + 2.0_dp * DEG2RAD    ! i_M: +2 deg
   x_init(10) = x_true(10) + 5.0_dp * DEG2RAD    ! Om_M: +5 deg
   x_init(11) = x_true(11) + 5.0_dp * DEG2RAD    ! w_M: +5 deg
   x_init(12) = x_true(12) + 3.0_dp * DEG2RAD    ! M0_M: +3 deg
   x_init(13) = x_true(13) * 1.005_dp             ! mu_EM: +0.5%
-  x_init(14) = x_true(14)                        ! a_M: correct value
+  x_init(14) = x_true(14) * 1.10_dp                ! a_M: +10%
 
   print '(/,A)', '  Perturbed initial guess:'
   print '(A)', '  ── Earth ──'
@@ -1058,7 +1061,8 @@ program sun_ekf_3body
        ' deg  (delta ', (x_init(5)-x_true(5))*RAD2DEG, ' deg)'
   print '(A,ES20.12,A,F6.3,A)', '    mu_SE = ', x_init(6), &
        '  (', (x_init(6)/x_true(6)-1.0_dp)*100.0_dp, '%)'
-  print '(A,F12.1,A)',          '    a_E   = ', x_init(7), ' km (correct)'
+  print '(A,F12.1,A,F7.3,A)',  '    a_E   = ', x_init(7), &
+       ' km  (', (x_init(7)/x_true(7)-1.0_dp)*100.0_dp, '%)'
   print '(A)', '  ── Moon ──'
   print '(A,F12.8,A,F6.1,A)', '    e_M   = ', x_init(8), &
        '  (', (x_init(8)/x_true(8)-1.0_dp)*100.0_dp, '%)'
@@ -1072,12 +1076,35 @@ program sun_ekf_3body
        ' deg  (delta ', (x_init(12)-x_true(12))*RAD2DEG, ' deg)'
   print '(A,ES20.12,A,F6.3,A)', '    mu_EM = ', x_init(13), &
        '  (', (x_init(13)/x_true(13)-1.0_dp)*100.0_dp, '%)'
-  print '(A,F12.1,A)',          '    a_M   = ', x_init(14), ' km (correct)'
+  print '(A,F12.1,A,F7.3,A)',  '    a_M   = ', x_init(14), &
+       ' km  (', (x_init(14)/x_true(14)-1.0_dp)*100.0_dp, '%)'
 
   ! ── 6. Initialize EKF ──
   x = x_init
 
-  Q_noise = 0.0_dp   ! elements are osculating ICs — constant
+  ! Process noise rate: Q_rate (state²/day)
+  ! Sun orbit: 2-body is excellent, no process noise needed
+  ! Moon orbit: solar perturbations cause large element drift
+  ! mu and a are physical constants → zero process noise
+  Q_rate = 0.0_dp
+  ! Earth orbital elements: tiny (Sun-Earth 2-body is very accurate)
+  Q_rate(1) = (1.0d-6)**2                    ! e_E
+  Q_rate(2) = (1.0d-4 * DEG2RAD)**2          ! i_E
+  Q_rate(3) = (1.0d-4 * DEG2RAD)**2          ! Omega_E
+  Q_rate(4) = (1.0d-4 * DEG2RAD)**2          ! omega_E
+  Q_rate(5) = (1.0d-4 * DEG2RAD)**2          ! M0_E
+  Q_rate(6) = 0.0_dp                         ! mu_SE: constant
+  Q_rate(7) = 0.0_dp                         ! a_E: constant
+  ! Moon orbital elements: large (solar perturbations)
+  Q_rate(8)  = (1.0d-3)**2                   ! e_M: evection
+  Q_rate(9)  = (0.01_dp * DEG2RAD)**2        ! i_M
+  Q_rate(10) = (0.1_dp * DEG2RAD)**2         ! Omega_M: node precession
+  Q_rate(11) = (0.2_dp * DEG2RAD)**2         ! omega_M: apse precession
+  Q_rate(12) = (0.1_dp * DEG2RAD)**2         ! M0_M
+  Q_rate(13) = 0.0_dp                        ! mu_EM: constant
+  Q_rate(14) = 0.0_dp                        ! a_M: constant
+
+  Q_noise = 0.0_dp   ! will be set per step from Q_rate * dt
 
   sigma_obs = 60.0_dp / 3600.0_dp   ! 60 arcsec
   R_noise = 0.0_dp
@@ -1085,12 +1112,28 @@ program sun_ekf_3body
   R_noise(2,2) = sigma_obs**2
 
   ! FD perturbation sizes
+  ! Earth: 1e-7 (far away, standard)
   delta(1) = 1.0d-7;  delta(2) = 1.0d-7;  delta(3) = 1.0d-7
   delta(4) = 1.0d-7;  delta(5) = 1.0d-7;  delta(6) = mu_se * 1.0d-7
   delta(7) = a_comp * 1.0d-7
-  delta(8) = 1.0d-7;  delta(9) = 1.0d-7;  delta(10) = 1.0d-7
-  delta(11) = 1.0d-7; delta(12) = 1.0d-7; delta(13) = mu_em * 1.0d-7
-  delta(14) = a_m_comp * 1.0d-7
+  ! Moon: 1e-5 (closer, parallax needs larger FD step)
+  delta(8) = 1.0d-5;  delta(9) = 1.0d-5;  delta(10) = 1.0d-5
+  delta(11) = 1.0d-5; delta(12) = 1.0d-5; delta(13) = mu_em * 1.0d-5
+  delta(14) = a_m_comp * 1.0d-5
+
+  ! ═══════════════════════════════════════════════════
+  ! Outer iteration loop: re-run all 3 stages using
+  ! previous final estimate as starting point.
+  ! ═══════════════════════════════════════════════════
+  do iter = 1, N_ITER
+
+  print '(/,A,I2,A,I2)', '  ══════ Iteration ', iter, ' / ', N_ITER
+
+  ! On iteration > 1, use previous result as starting point
+  if (iter > 1) then
+    x_init = x
+  end if
+  x = x_init
 
   ! ══════════════════════════════════════════════════════════════════════
   ! STAGE 1: Fit Earth orbit from Sun observations
@@ -1101,8 +1144,8 @@ program sun_ekf_3body
   P_cov(3,3) = (8.0_dp * DEG2RAD)**2       ! sigma_Omega = 8 deg
   P_cov(4,4) = (8.0_dp * DEG2RAD)**2       ! sigma_omega = 8 deg
   P_cov(5,5) = (5.0_dp * DEG2RAD)**2       ! sigma_M0 = 5 deg
-  P_cov(6,6) = (0.01_dp * mu_se)**2        ! sigma_mu = 1%
-  P_cov(7,7) = (0.01_dp * a_comp)**2       ! sigma_a_E = 1%
+  P_cov(6,6) = (0.05_dp * mu_se)**2        ! sigma_mu = 5%
+  P_cov(7,7) = (0.20_dp * a_comp)**2       ! sigma_a_E = 20%
   ! Moon params frozen (P = 0)
 
   active = .false.
@@ -1126,8 +1169,8 @@ program sun_ekf_3body
   P_cov(10,10) = (10.0_dp * DEG2RAD)**2      ! sigma_Om_m = 10 deg
   P_cov(11,11) = (10.0_dp * DEG2RAD)**2      ! sigma_w_m = 10 deg
   P_cov(12,12) = (5.0_dp * DEG2RAD)**2       ! sigma_M0_m = 5 deg
-  P_cov(13,13) = (0.01_dp * mu_em)**2        ! sigma_mu_em = 1%
-  P_cov(14,14) = (0.01_dp * a_m_comp)**2     ! sigma_a_M = 1%
+  P_cov(13,13) = (0.05_dp * mu_em)**2        ! sigma_mu_em = 5%
+  P_cov(14,14) = (0.20_dp * a_m_comp)**2     ! sigma_a_M = 20%
 
   active = .false.
   active(8:14) = .true.
@@ -1153,6 +1196,17 @@ program sun_ekf_3body
 
   call run_ekf_pass(x, P_cov, n_all, all_jd, all_alt, all_az, all_body, active, &
                     'Stage 3: Joint refinement (all observations)')
+
+  ! Print iteration summary
+  print '(/,A,I2,A)', '  ── Iteration ', iter, ' summary ──'
+  print '(A,F9.4,A,F9.4,A)', '    Earth:  mu_SE err=', &
+       (x(6)/x_true(6)-1.0_dp)*100.0_dp, '%   a_E err=', &
+       (x(7)/x_true(7)-1.0_dp)*100.0_dp, '%'
+  print '(A,F9.4,A,F9.4,A)', '    Moon:   mu_EM err=', &
+       (x(13)/x_true(13)-1.0_dp)*100.0_dp, '%   a_M err=', &
+       (x(14)/x_true(14)-1.0_dp)*100.0_dp, '%'
+
+  end do  ! outer iteration loop
 
   ! ══════════════════════════════════════════════════════════════════════
   ! FINAL RESULTS
@@ -1323,6 +1377,7 @@ contains
     real(dp) :: xp(NS), det_S
     real(dp) :: win_a, win_z
     integer :: kk, jj, n_proc
+    real(dp) :: jd_prev, dt_days, Q_step(NS,NS)
 
     I_id = 0.0_dp
     do kk = 1, NS
@@ -1331,21 +1386,36 @@ contains
 
     win_a = 0.0_dp; win_z = 0.0_dp
     n_proc = 0
+    jd_prev = obs_jds(1)
 
     print '(/,A,A)', '  ', trim(stage_name)
     print '(A)', '  ──────────────────────────────────────────────────────────────────────────'
     print '(A)', '   Obs#  winRMS_a" winRMS_z"  e_E_err%  muSE_err%  aE_err%   e_M_err%  muEM_err%  aM_err%'
 
     do kk = 1, n_obs
-      P_pred = Pv + Q_noise
+      ! Time-dependent process noise
+      dt_days = abs(obs_jds(kk) - jd_prev)
+      if (dt_days < 1.0d-6) dt_days = 1.0d-6
+      Q_step = 0.0_dp
+      do jj = 1, NS
+        Q_step(jj,jj) = Q_rate(jj) * dt_days
+      end do
+      P_pred = Pv + Q_step
+      jd_prev = obs_jds(kk)
 
       call predict_altaz(xv, t_epoch, obs_jds(kk), &
                           lat_obs, lon_obs, obs_bodies(kk), alt_pred, az_pred)
+
+      ! Skip if prediction is NaN (bad state)
+      if (alt_pred /= alt_pred .or. az_pred /= az_pred) cycle
 
       innov(1) = obs_alts(kk) - alt_pred
       innov(2) = obs_azs(kk)  - az_pred
       if (innov(2) >  180.0_dp) innov(2) = innov(2) - 360.0_dp
       if (innov(2) < -180.0_dp) innov(2) = innov(2) + 360.0_dp
+
+      ! Innovation gating: skip if residual > 30 deg (wildly wrong)
+      if (abs(innov(1)) > 30.0_dp .or. abs(innov(2)) > 30.0_dp) cycle
 
       ! Jacobian (only active params get FD columns)
       H = 0.0_dp
@@ -1355,6 +1425,9 @@ contains
         xp(jj) = xp(jj) + delta(jj)
         call predict_altaz(xp, t_epoch, obs_jds(kk), &
                             lat_obs, lon_obs, obs_bodies(kk), alt_p, az_p)
+        if (alt_p /= alt_p .or. az_p /= az_p) then
+          H(1,jj) = 0.0_dp; H(2,jj) = 0.0_dp; cycle
+        end if
         H(1,jj) = (alt_p - alt_pred) / delta(jj)
         H(2,jj) = (az_p  - az_pred)  / delta(jj)
         if (H(2,jj) >  180.0_dp / delta(jj)) H(2,jj) = H(2,jj) - 360.0_dp / delta(jj)
@@ -1374,10 +1447,18 @@ contains
 
       K_gain = matmul(PHt, S_inv)
 
-      ! State update
+      ! State update (save old state for NaN recovery)
+      xp = xv
       do jj = 1, NS
         xv(jj) = xv(jj) + K_gain(jj,1)*innov(1) + K_gain(jj,2)*innov(2)
       end do
+
+      ! NaN guard: if any state is NaN, revert and skip
+      if (any(xv /= xv)) then
+        xv = xp
+        Pv = P_pred
+        cycle
+      end if
 
       ! Enforce constraints
       ! Earth angles
