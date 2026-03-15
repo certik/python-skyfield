@@ -863,6 +863,8 @@ program moon_ekf
   character(len=7) :: param_names(NS)
   real(dp) :: Q_rate(NS)   ! process noise rate (state²/day)
   real(dp) :: jd_prev, dt_days
+  integer :: iter
+  integer, parameter :: N_ITER = 5   ! outer EKF iterations
 
   ! ═══════════════════════════════════════════════════
   lat_obs = 40.0_dp
@@ -946,14 +948,28 @@ program moon_ekf
   print '(A,ES20.12,A)',  '    mu    = ', x_true(6), ' km^3/s^2'
   print '(A,F12.1,A)',    '    a     = ', x_true(7), ' km'
 
-  ! ── 3. Perturb initial state ──
-  x_init(1) = x_true(1) * 1.20_dp            ! e: +20%
-  x_init(2) = x_true(2) + 2.0_dp * DEG2RAD   ! i: +2 deg
-  x_init(3) = x_true(3) + 5.0_dp * DEG2RAD   ! Omega: +5 deg
-  x_init(4) = x_true(4) + 5.0_dp * DEG2RAD   ! omega: +5 deg
-  x_init(5) = x_true(5) + 3.0_dp * DEG2RAD   ! M0: +3 deg
-  x_init(6) = x_true(6) * 1.005_dp           ! mu: +0.5%
-  x_init(7) = x_true(7)                      ! a: correct value
+  ! ═══════════════════════════════════════════════════
+  ! Outer iteration loop: re-run EKF using previous
+  ! final estimate as starting point each time.
+  ! ═══════════════════════════════════════════════════
+  do iter = 1, N_ITER
+
+  print '(/,A,I2,A,I2)', '  ══════ Iteration ', iter, ' / ', N_ITER
+
+  ! ── 3. Set initial state ──
+  if (iter == 1) then
+    ! First iteration: perturbed initial guess
+    x_init(1) = x_true(1) * 1.20_dp            ! e: +20%
+    x_init(2) = x_true(2) + 2.0_dp * DEG2RAD   ! i: +2 deg
+    x_init(3) = x_true(3) + 5.0_dp * DEG2RAD   ! Omega: +5 deg
+    x_init(4) = x_true(4) + 5.0_dp * DEG2RAD   ! omega: +5 deg
+    x_init(5) = x_true(5) + 3.0_dp * DEG2RAD   ! M0: +3 deg
+    x_init(6) = x_true(6) * 1.005_dp           ! mu: +0.5%
+    x_init(7) = x_true(7) * 2.0_dp             ! a: +100%
+  else
+    ! Subsequent iterations: use previous final estimate
+    x_init = x
+  end if
 
   print '(/,A)', '  Perturbed initial guess:'
   print '(A,F12.8,A,F6.1,A)',  '    e     = ', x_init(1), &
@@ -968,7 +984,8 @@ program moon_ekf
        ' deg  (delta ', (x_init(5)-x_true(5))*RAD2DEG, ' deg)'
   print '(A,ES20.12,A,F6.3,A)', '    mu    = ', x_init(6), &
        '  (', (x_init(6)/x_true(6)-1.0_dp)*100.0_dp, '%)'
-  print '(A,F12.1,A)',          '    a     = ', x_init(7), ' km (correct)'
+  print '(A,F12.1,A,F6.3,A)',  '    a     = ', x_init(7), &
+       ' km  (', (x_init(7)/x_true(7)-1.0_dp)*100.0_dp, '%)'
 
   ! ── 4. Initialize EKF ──
   x = x_init
@@ -1150,6 +1167,13 @@ program moon_ekf
       win_alt = 0.0_dp; win_az = 0.0_dp
     end if
   end do
+
+  ! Print iteration summary
+  print '(A,I2,A,F8.3,A,F8.3,A)', '  Iter ', iter, ' done:  mu_err=', &
+       (x(6)/x_true(6) - 1.0_dp) * 100.0_dp, '%  a_err=', &
+       (x(7)/x_true(7) - 1.0_dp) * 100.0_dp, '%'
+
+  end do  ! outer iteration loop
 
   ! ── 6. Final results ──
   print '(/,A)', '════════════════════════════════════════════════════════'
