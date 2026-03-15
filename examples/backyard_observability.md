@@ -1,5 +1,30 @@
 # What Can You Measure from a Backyard?
 
+## Notation
+
+| Symbol | Description | Typical value |
+|--------|-------------|---------------|
+| R_E | Earth's mean radius | 6 378 km |
+| a_E | Earth–Sun semi-major axis (≈ 1 AU) | 1.496 × 10⁸ km |
+| a_M | Moon–Earth semi-major axis | 3.844 × 10⁵ km |
+| T_E | Earth's orbital period | 365.25 days |
+| T_M | Moon's orbital period (sidereal) | 27.32 days |
+| n_E | Earth's mean motion = 2π/T_E | 0.986°/day |
+| n_M | Moon's mean motion = 2π/T_M | 13.18°/day |
+| m | Mean motion ratio n_E/n_M | 0.0748 |
+| GM_Sun | Sun's gravitational parameter | 1.327 × 10¹¹ km³/s² |
+| GM_Earth | Earth's gravitational parameter | 3.986 × 10⁵ km³/s² |
+| GM_Moon | Moon's gravitational parameter | 4 903 km³/s² |
+| μ_SE | GM_Sun + GM_Earth (Sun–Earth Kepler parameter) | 1.327 × 10¹¹ km³/s² |
+| μ_EM | GM_Earth + GM_Moon (Earth–Moon Kepler parameter) | 4.086 × 10⁵ km³/s² |
+| e | Orbital eccentricity | 0.017 (Earth), 0.055 (Moon) |
+| i | Orbital inclination | 0.0° (Earth, ecliptic), 5.1° (Moon) |
+| Ω | Longitude of ascending node | — |
+| ω | Argument of perihelion/perigee | — |
+| M₀ | Mean anomaly at epoch | — |
+| P₂, P₃ | Legendre polynomial orders (quadrupole, octupole) | — |
+| D | Mean elongation of Moon from Sun | — |
+
 ## Setup
 
 A single observer at a known latitude and longitude measures the **altitude and
