@@ -965,7 +965,8 @@ program moon_ekf
     x_init(4) = x_true(4) + 5.0_dp * DEG2RAD   ! omega: +5 deg
     x_init(5) = x_true(5) + 3.0_dp * DEG2RAD   ! M0: +3 deg
     x_init(6) = x_true(6) * 1.005_dp           ! mu: +0.5%
-    x_init(7) = x_true(7) * 2.0_dp             ! a: +100%
+    !x_init(7) = x_true(7) * 2.0_dp            ! a: +100%
+    x_init(7) = 1e6_dp                         ! a: 1 million km (way off)
   else
     ! Subsequent iterations: use previous final estimate
     x_init = x
