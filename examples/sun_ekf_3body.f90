@@ -2,13 +2,11 @@
 ! sun_ekf_3body.f90 — 3-body Sun-Earth-Moon EKF
 ! ═══════════════════════════════════════════════════════════════════════
 !
-! State vector (12 parameters):
-!   x(1:6)  = [e_E, i_E, Ω_E, ω_E, M0_E, μ_SE]   Earth orbit
-!   x(7:12) = [e_M, i_M, Ω_M, ω_M, M0_M, μ_EM]   Moon orbit
+! State vector (14 parameters):
+!   x(1:7)  = [e_E, i_E, Ω_E, ω_E, M0_E, μ_SE, a_E]   Earth orbit
+!   x(8:14) = [e_M, i_M, Ω_M, ω_M, M0_M, μ_EM, a_M]   Moon orbit
 !
 ! Fixed parameters:
-!   a_E      = Earth semi-major axis (from DE440s)
-!   a_M      = Moon semi-major axis (from DE440s)
 !   GM_moon  = 4902.800066 km³/s²
 !   R_E      = Earth radius (6378.137 km)
 !
@@ -399,7 +397,7 @@ module kepler_obs_mod
   use constants_mod
   use nbody3_mod, only: NB, propagate_nbody
   implicit none
-  integer, parameter :: NS = 12   ! EKF state dimension (6 Earth + 6 Moon)
+  integer, parameter :: NS = 14   ! EKF state dimension (7 Earth + 7 Moon)
   real(dp), parameter :: GM_EARTH_KNOWN = 398600.435507_dp
   real(dp), parameter :: GM_MOON_KNOWN  = 4902.800066_dp
 
@@ -689,15 +687,15 @@ contains
   end function
 
   ! ── Predict alt/az for Sun or Moon from 12-param state ──
-  subroutine predict_altaz(x, a_earth_fix, a_moon_fix, t_epoch, jd_obs, &
+  subroutine predict_altaz(x, t_epoch, jd_obs, &
                             lat_deg, lon_deg, body_code, alt_deg, az_deg)
-    real(dp), intent(in)  :: x(NS), a_earth_fix, a_moon_fix
+    real(dp), intent(in)  :: x(NS)
     real(dp), intent(in)  :: t_epoch, jd_obs, lat_deg, lon_deg
     integer,  intent(in)  :: body_code   ! 1=Sun, 2=Moon
     real(dp), intent(out) :: alt_deg, az_deg
 
-    real(dp) :: ecc_e, inc_e, raan_e, argp_e, M0_e, mu_se
-    real(dp) :: ecc_m, inc_m, raan_m, argp_m, M0_m, mu_em
+    real(dp) :: ecc_e, inc_e, raan_e, argp_e, M0_e, mu_se, a_earth_v
+    real(dp) :: ecc_m, inc_m, raan_m, argp_m, M0_m, mu_em, a_moon_v
     real(dp) :: gm_sun_v, gm_earth_v, gm_moon_v, M_tot
     real(dp) :: r_es(3), v_es(3), r_me(3), v_me(3)
     real(dp) :: r_bary(3), v_bary(3)
@@ -716,9 +714,9 @@ contains
 
     ! ═══ Unpack state ═══
     ecc_e  = x(1);  inc_e  = x(2);  raan_e = x(3)
-    argp_e = x(4);  M0_e   = x(5);  mu_se  = x(6)
-    ecc_m  = x(7);  inc_m  = x(8);  raan_m = x(9)
-    argp_m = x(10); M0_m   = x(11); mu_em  = x(12)
+    argp_e = x(4);  M0_e   = x(5);  mu_se  = x(6);  a_earth_v = x(7)
+    ecc_m  = x(8);  inc_m  = x(9);  raan_m = x(10)
+    argp_m = x(11); M0_m   = x(12); mu_em  = x(13); a_moon_v = x(14)
 
     ! ═══ Derive individual GMs ═══
     gm_earth_v = mu_em - GM_MOON_KNOWN
@@ -727,10 +725,10 @@ contains
 
     ! ═══ Elements → Cartesian at epoch ═══
     ! Earth relative to Sun (from Earth Keplerian elements)
-    call kepler_to_cart(a_earth_fix, ecc_e, inc_e, raan_e, argp_e, M0_e, &
+    call kepler_to_cart(a_earth_v, ecc_e, inc_e, raan_e, argp_e, M0_e, &
                         mu_se, r_es, v_es)
     ! Moon relative to Earth (from Moon Keplerian elements)
-    call kepler_to_cart(a_moon_fix, ecc_m, inc_m, raan_m, argp_m, M0_m, &
+    call kepler_to_cart(a_moon_v, ecc_m, inc_m, raan_m, argp_m, M0_m, &
                         mu_em, r_me, v_me)
 
     ! ═══ 3-body initial conditions (barycentric frame) ═══
@@ -850,7 +848,7 @@ program sun_ekf_3body
 
   ! State vectors
   real(dp) :: x(NS), x_true(NS), x_init(NS)
-  real(dp) :: a_earth, a_moon, t_epoch
+  real(dp) :: t_epoch
 
   ! EKF covariance
   real(dp) :: P_cov(NS,NS)
@@ -894,6 +892,8 @@ program sun_ekf_3body
   real(dp) :: err_deg
   logical :: active(NS)
   real(dp) :: gm_earth_est, gm_sun_est
+  real(dp) :: corr_mat(NS,NS), sig_i_v, sig_j_v
+  character(len=7) :: param_names(NS)
 
   ! ═══════════════════════════════════════════════════
   lat_obs = 40.0_dp
@@ -903,6 +903,24 @@ program sun_ekf_3body
   print '(A)', '  3-Body Sun-Earth-Moon EKF'
   print '(A,F8.4,A,F8.4)', '  Observer: lat=', lat_obs, ' lon=', lon_obs
   print '(A)', '════════════════════════════════════════════════════════'
+  print '(A)', ''
+  print '(A)', '  State vector (14 parameters):'
+  print '(A)', '  ── Earth orbit x(1:7) ──'
+  print '(A)', '    e_E   = eccentricity of Earth orbit'
+  print '(A)', '    i_E   = inclination to equator (obliquity ~23.44 deg)'
+  print '(A)', '    Om_E  = longitude of ascending node'
+  print '(A)', '    w_E   = argument of periapsis'
+  print '(A)', '    M0_E  = mean anomaly at epoch'
+  print '(A)', '    mu_SE = GM_sun + GM_earth (km^3/s^2)'
+  print '(A)', '    a_E   = semi-major axis of Earth orbit (km)'
+  print '(A)', '  ── Moon orbit x(8:14) ──'
+  print '(A)', '    e_M   = eccentricity of Moon orbit'
+  print '(A)', '    i_M   = inclination to equator (~28.5 deg from ecliptic)'
+  print '(A)', '    Om_M  = longitude of ascending node'
+  print '(A)', '    w_M   = argument of periapsis'
+  print '(A)', '    M0_M  = mean anomaly at epoch'
+  print '(A)', '    mu_EM = GM_earth + GM_moon (km^3/s^2)'
+  print '(A)', '    a_M   = semi-major axis of Moon orbit (km)'
 
   ! ── 1. Read observations, split by body ──
   call read_observations('observations.dat', obs_all, n_obs_all, 1.0d10)
@@ -967,7 +985,6 @@ program sun_ekf_3body
        M0_comp, mu_se, r_check, v_check)
   r_diff = sqrt(sum((r_check - r_rel)**2))
   print '(A,ES10.3,A)', '  Earth round-trip error: ', r_diff, ' km'
-  a_earth = a_comp
 
   ! ── 3. Compute true Moon orbital elements from DE440s ──
   ! Moon relative to Earth = (Moon wrt EMB) - (Earth wrt EMB)
@@ -982,15 +999,16 @@ program sun_ekf_3body
        M0_m_comp, mu_em, r_check, v_check)
   r_diff = sqrt(sum((r_check - r_moon_rel)**2))
   print '(A,ES10.3,A)', '  Moon  round-trip error: ', r_diff, ' km'
-  a_moon = a_m_comp
 
   ! ── 4. True state vector ──
   x_true(1)  = ecc_comp;     x_true(2)  = inc_comp
   x_true(3)  = raan_comp;    x_true(4)  = argp_comp
   x_true(5)  = M0_comp;      x_true(6)  = mu_se
-  x_true(7)  = ecc_m_comp;   x_true(8)  = inc_m_comp
-  x_true(9)  = raan_m_comp;  x_true(10) = argp_m_comp
-  x_true(11) = M0_m_comp;    x_true(12) = mu_em
+  x_true(7)  = a_comp
+  x_true(8)  = ecc_m_comp;   x_true(9)  = inc_m_comp
+  x_true(10) = raan_m_comp;  x_true(11) = argp_m_comp
+  x_true(12) = M0_m_comp;    x_true(13) = mu_em
+  x_true(14) = a_m_comp
 
   print '(/,A)', '  True Keplerian elements (J2000 equatorial):'
   print '(A)', '  ── Earth orbit ──'
@@ -1000,15 +1018,15 @@ program sun_ekf_3body
   print '(A,F10.5,A)',    '    w_E   = ', x_true(4) * RAD2DEG, ' deg'
   print '(A,F10.5,A)',    '    M0_E  = ', x_true(5) * RAD2DEG, ' deg'
   print '(A,ES20.12,A)',  '    mu_SE = ', x_true(6), ' km^3/s^2'
-  print '(A,F12.1,A)',    '    a_E   = ', a_earth, ' km (fixed)'
+  print '(A,F12.1,A)',    '    a_E   = ', x_true(7), ' km'
   print '(A)', '  ── Moon orbit ──'
-  print '(A,F12.8)',      '    e_M   = ', x_true(7)
-  print '(A,F10.5,A)',    '    i_M   = ', x_true(8) * RAD2DEG, ' deg'
-  print '(A,F10.5,A)',    '    Om_M  = ', x_true(9) * RAD2DEG, ' deg'
-  print '(A,F10.5,A)',    '    w_M   = ', x_true(10) * RAD2DEG, ' deg'
-  print '(A,F10.5,A)',    '    M0_M  = ', x_true(11) * RAD2DEG, ' deg'
-  print '(A,ES20.12,A)',  '    mu_EM = ', x_true(12), ' km^3/s^2'
-  print '(A,F12.1,A)',    '    a_M   = ', a_moon, ' km (fixed)'
+  print '(A,F12.8)',      '    e_M   = ', x_true(8)
+  print '(A,F10.5,A)',    '    i_M   = ', x_true(9) * RAD2DEG, ' deg'
+  print '(A,F10.5,A)',    '    Om_M  = ', x_true(10) * RAD2DEG, ' deg'
+  print '(A,F10.5,A)',    '    w_M   = ', x_true(11) * RAD2DEG, ' deg'
+  print '(A,F10.5,A)',    '    M0_M  = ', x_true(12) * RAD2DEG, ' deg'
+  print '(A,ES20.12,A)',  '    mu_EM = ', x_true(13), ' km^3/s^2'
+  print '(A,F12.1,A)',    '    a_M   = ', x_true(14), ' km'
 
   ! ── 5. Perturbed initial state ──
   x_init(1)  = x_true(1)  * 1.20_dp            ! e_E: +20%
@@ -1017,12 +1035,14 @@ program sun_ekf_3body
   x_init(4)  = x_true(4)  + 5.0_dp * DEG2RAD   ! w_E: +5 deg
   x_init(5)  = x_true(5)  + 3.0_dp * DEG2RAD   ! M0_E: +3 deg
   x_init(6)  = x_true(6)  * 1.005_dp            ! mu_SE: +0.5%
-  x_init(7)  = x_true(7)  * 1.20_dp             ! e_M: +20%
-  x_init(8)  = x_true(8)  + 2.0_dp * DEG2RAD    ! i_M: +2 deg
-  x_init(9)  = x_true(9)  + 5.0_dp * DEG2RAD    ! Om_M: +5 deg
-  x_init(10) = x_true(10) + 5.0_dp * DEG2RAD    ! w_M: +5 deg
-  x_init(11) = x_true(11) + 3.0_dp * DEG2RAD    ! M0_M: +3 deg
-  x_init(12) = x_true(12) * 1.005_dp             ! mu_EM: +0.5%
+  x_init(7)  = x_true(7)                        ! a_E: correct value
+  x_init(8)  = x_true(8)  * 1.20_dp             ! e_M: +20%
+  x_init(9)  = x_true(9)  + 2.0_dp * DEG2RAD    ! i_M: +2 deg
+  x_init(10) = x_true(10) + 5.0_dp * DEG2RAD    ! Om_M: +5 deg
+  x_init(11) = x_true(11) + 5.0_dp * DEG2RAD    ! w_M: +5 deg
+  x_init(12) = x_true(12) + 3.0_dp * DEG2RAD    ! M0_M: +3 deg
+  x_init(13) = x_true(13) * 1.005_dp             ! mu_EM: +0.5%
+  x_init(14) = x_true(14)                        ! a_M: correct value
 
   print '(/,A)', '  Perturbed initial guess:'
   print '(A)', '  ── Earth ──'
@@ -1038,19 +1058,21 @@ program sun_ekf_3body
        ' deg  (delta ', (x_init(5)-x_true(5))*RAD2DEG, ' deg)'
   print '(A,ES20.12,A,F6.3,A)', '    mu_SE = ', x_init(6), &
        '  (', (x_init(6)/x_true(6)-1.0_dp)*100.0_dp, '%)'
+  print '(A,F12.1,A)',          '    a_E   = ', x_init(7), ' km (correct)'
   print '(A)', '  ── Moon ──'
-  print '(A,F12.8,A,F6.1,A)', '    e_M   = ', x_init(7), &
-       '  (', (x_init(7)/x_true(7)-1.0_dp)*100.0_dp, '%)'
-  print '(A,F10.5,A,F6.2,A)', '    i_M   = ', x_init(8)*RAD2DEG, &
-       ' deg  (delta ', (x_init(8)-x_true(8))*RAD2DEG, ' deg)'
-  print '(A,F10.5,A,F6.2,A)', '    Om_M  = ', x_init(9)*RAD2DEG, &
+  print '(A,F12.8,A,F6.1,A)', '    e_M   = ', x_init(8), &
+       '  (', (x_init(8)/x_true(8)-1.0_dp)*100.0_dp, '%)'
+  print '(A,F10.5,A,F6.2,A)', '    i_M   = ', x_init(9)*RAD2DEG, &
        ' deg  (delta ', (x_init(9)-x_true(9))*RAD2DEG, ' deg)'
-  print '(A,F10.5,A,F6.2,A)', '    w_M   = ', x_init(10)*RAD2DEG, &
+  print '(A,F10.5,A,F6.2,A)', '    Om_M  = ', x_init(10)*RAD2DEG, &
        ' deg  (delta ', (x_init(10)-x_true(10))*RAD2DEG, ' deg)'
-  print '(A,F10.5,A,F6.2,A)', '    M0_M  = ', x_init(11)*RAD2DEG, &
+  print '(A,F10.5,A,F6.2,A)', '    w_M   = ', x_init(11)*RAD2DEG, &
        ' deg  (delta ', (x_init(11)-x_true(11))*RAD2DEG, ' deg)'
-  print '(A,ES20.12,A,F6.3,A)', '    mu_EM = ', x_init(12), &
-       '  (', (x_init(12)/x_true(12)-1.0_dp)*100.0_dp, '%)'
+  print '(A,F10.5,A,F6.2,A)', '    M0_M  = ', x_init(12)*RAD2DEG, &
+       ' deg  (delta ', (x_init(12)-x_true(12))*RAD2DEG, ' deg)'
+  print '(A,ES20.12,A,F6.3,A)', '    mu_EM = ', x_init(13), &
+       '  (', (x_init(13)/x_true(13)-1.0_dp)*100.0_dp, '%)'
+  print '(A,F12.1,A)',          '    a_M   = ', x_init(14), ' km (correct)'
 
   ! ── 6. Initialize EKF ──
   x = x_init
@@ -1065,8 +1087,10 @@ program sun_ekf_3body
   ! FD perturbation sizes
   delta(1) = 1.0d-7;  delta(2) = 1.0d-7;  delta(3) = 1.0d-7
   delta(4) = 1.0d-7;  delta(5) = 1.0d-7;  delta(6) = mu_se * 1.0d-7
-  delta(7) = 1.0d-7;  delta(8) = 1.0d-7;  delta(9) = 1.0d-7
-  delta(10) = 1.0d-7; delta(11) = 1.0d-7; delta(12) = mu_em * 1.0d-7
+  delta(7) = a_comp * 1.0d-7
+  delta(8) = 1.0d-7;  delta(9) = 1.0d-7;  delta(10) = 1.0d-7
+  delta(11) = 1.0d-7; delta(12) = 1.0d-7; delta(13) = mu_em * 1.0d-7
+  delta(14) = a_m_comp * 1.0d-7
 
   ! ══════════════════════════════════════════════════════════════════════
   ! STAGE 1: Fit Earth orbit from Sun observations
@@ -1078,10 +1102,11 @@ program sun_ekf_3body
   P_cov(4,4) = (8.0_dp * DEG2RAD)**2       ! sigma_omega = 8 deg
   P_cov(5,5) = (5.0_dp * DEG2RAD)**2       ! sigma_M0 = 5 deg
   P_cov(6,6) = (0.01_dp * mu_se)**2        ! sigma_mu = 1%
+  P_cov(7,7) = (0.01_dp * a_comp)**2       ! sigma_a_E = 1%
   ! Moon params frozen (P = 0)
 
   active = .false.
-  active(1:6) = .true.
+  active(1:7) = .true.
 
   call run_ekf_pass(x, P_cov, n_sun, s_jd, s_alt, s_az, s_body, active, &
                     'Stage 1: Earth orbit from Sun observations')
@@ -1090,28 +1115,31 @@ program sun_ekf_3body
   print '(A,F9.4,A)', '    e_E  err = ', (x(1)/x_true(1)-1.0_dp)*100.0_dp, '%'
   print '(A,F9.4,A)', '    i_E  err = ', (x(2)-x_true(2))*RAD2DEG, ' deg'
   print '(A,F9.4,A)', '    mu_SE err= ', (x(6)/x_true(6)-1.0_dp)*100.0_dp, '%'
+  print '(A,F9.4,A)', '    a_E  err = ', (x(7)/x_true(7)-1.0_dp)*100.0_dp, '%'
 
   ! ══════════════════════════════════════════════════════════════════════
   ! STAGE 2: Fit Moon orbit from Moon observations
   ! ══════════════════════════════════════════════════════════════════════
   ! Initialize Moon covariance (Earth params keep their converged P)
-  P_cov(7,7)   = (0.02_dp)**2                ! sigma_e_m = 0.02
-  P_cov(8,8)   = (5.0_dp * DEG2RAD)**2       ! sigma_i_m = 5 deg
-  P_cov(9,9)   = (10.0_dp * DEG2RAD)**2      ! sigma_Om_m = 10 deg
-  P_cov(10,10) = (10.0_dp * DEG2RAD)**2      ! sigma_w_m = 10 deg
-  P_cov(11,11) = (5.0_dp * DEG2RAD)**2       ! sigma_M0_m = 5 deg
-  P_cov(12,12) = (0.01_dp * mu_em)**2        ! sigma_mu_em = 1%
+  P_cov(8,8)   = (0.02_dp)**2                ! sigma_e_m = 0.02
+  P_cov(9,9)   = (5.0_dp * DEG2RAD)**2       ! sigma_i_m = 5 deg
+  P_cov(10,10) = (10.0_dp * DEG2RAD)**2      ! sigma_Om_m = 10 deg
+  P_cov(11,11) = (10.0_dp * DEG2RAD)**2      ! sigma_w_m = 10 deg
+  P_cov(12,12) = (5.0_dp * DEG2RAD)**2       ! sigma_M0_m = 5 deg
+  P_cov(13,13) = (0.01_dp * mu_em)**2        ! sigma_mu_em = 1%
+  P_cov(14,14) = (0.01_dp * a_m_comp)**2     ! sigma_a_M = 1%
 
   active = .false.
-  active(7:12) = .true.
+  active(8:14) = .true.
 
   call run_ekf_pass(x, P_cov, n_moon, m_jd, m_alt, m_az, m_body, active, &
                     'Stage 2: Moon orbit from Moon observations')
 
   print '(/,A)', '  Stage 2 result:'
-  print '(A,F9.4,A)', '    e_M  err = ', (x(7)/x_true(7)-1.0_dp)*100.0_dp, '%'
-  print '(A,F9.4,A)', '    i_M  err = ', (x(8)-x_true(8))*RAD2DEG, ' deg'
-  print '(A,F9.4,A)', '    mu_EM err= ', (x(12)/x_true(12)-1.0_dp)*100.0_dp, '%'
+  print '(A,F9.4,A)', '    e_M  err = ', (x(8)/x_true(8)-1.0_dp)*100.0_dp, '%'
+  print '(A,F9.4,A)', '    i_M  err = ', (x(9)-x_true(9))*RAD2DEG, ' deg'
+  print '(A,F9.4,A)', '    mu_EM err= ', (x(13)/x_true(13)-1.0_dp)*100.0_dp, '%'
+  print '(A,F9.4,A)', '    a_M  err = ', (x(14)/x_true(14)-1.0_dp)*100.0_dp, '%'
 
   ! ══════════════════════════════════════════════════════════════════════
   ! STAGE 3: Joint refinement from all observations
@@ -1156,37 +1184,43 @@ program sun_ekf_3body
   print '(A,ES20.12)', '  mu_SE   ', x(6)
   print '(A,ES20.12,A,F8.4,A)', '  mu_true ', x_true(6), &
        '  err: ', (x(6)/x_true(6)-1.0_dp)*100.0_dp, '%'
+  print '(A,F12.1,A,F12.1,A,F8.4,A)', &
+       '  a_E     ', x(7), ' km  true: ', x_true(7), ' km  err: ', &
+       (x(7)/x_true(7)-1.0_dp)*100.0_dp, '%'
 
   ! ── Moon orbit ──
   print '(/,A)', '  ── Moon orbit ──'
   print '(A)',   '  Parameter   Estimated         True            Error'
   print '(A)',   '  ─────────────────────────────────────────────────────'
   print '(A,F12.8,4X,F12.8,4X,F8.4,A)', &
-       '  e_M     ', x(7), x_true(7), (x(7)/x_true(7)-1.0_dp)*100.0_dp, '%'
+       '  e_M     ', x(8), x_true(8), (x(8)/x_true(8)-1.0_dp)*100.0_dp, '%'
   print '(A,F10.5,A,2X,F10.5,A,2X,F8.4,A)', &
-       '  i_M     ', x(8)*RAD2DEG, ' deg', x_true(8)*RAD2DEG, ' deg', &
-       (x(8)-x_true(8))*RAD2DEG, ' deg'
-  err_deg = (x(9) - x_true(9)) * RAD2DEG
-  if (err_deg >  180.0_dp) err_deg = err_deg - 360.0_dp
-  if (err_deg < -180.0_dp) err_deg = err_deg + 360.0_dp
-  print '(A,F10.5,A,2X,F10.5,A,2X,F8.4,A)', &
-       '  Om_M    ', x(9)*RAD2DEG, ' deg', x_true(9)*RAD2DEG, ' deg', err_deg, ' deg'
+       '  i_M     ', x(9)*RAD2DEG, ' deg', x_true(9)*RAD2DEG, ' deg', &
+       (x(9)-x_true(9))*RAD2DEG, ' deg'
   err_deg = (x(10) - x_true(10)) * RAD2DEG
   if (err_deg >  180.0_dp) err_deg = err_deg - 360.0_dp
   if (err_deg < -180.0_dp) err_deg = err_deg + 360.0_dp
   print '(A,F10.5,A,2X,F10.5,A,2X,F8.4,A)', &
-       '  w_M     ', x(10)*RAD2DEG, ' deg', x_true(10)*RAD2DEG, ' deg', err_deg, ' deg'
+       '  Om_M    ', x(10)*RAD2DEG, ' deg', x_true(10)*RAD2DEG, ' deg', err_deg, ' deg'
   err_deg = (x(11) - x_true(11)) * RAD2DEG
   if (err_deg >  180.0_dp) err_deg = err_deg - 360.0_dp
   if (err_deg < -180.0_dp) err_deg = err_deg + 360.0_dp
   print '(A,F10.5,A,2X,F10.5,A,2X,F8.4,A)', &
-       '  M0_M    ', x(11)*RAD2DEG, ' deg', x_true(11)*RAD2DEG, ' deg', err_deg, ' deg'
-  print '(A,ES20.12)', '  mu_EM   ', x(12)
-  print '(A,ES20.12,A,F8.4,A)', '  mu_true ', x_true(12), &
-       '  err: ', (x(12)/x_true(12)-1.0_dp)*100.0_dp, '%'
+       '  w_M     ', x(11)*RAD2DEG, ' deg', x_true(11)*RAD2DEG, ' deg', err_deg, ' deg'
+  err_deg = (x(12) - x_true(12)) * RAD2DEG
+  if (err_deg >  180.0_dp) err_deg = err_deg - 360.0_dp
+  if (err_deg < -180.0_dp) err_deg = err_deg + 360.0_dp
+  print '(A,F10.5,A,2X,F10.5,A,2X,F8.4,A)', &
+       '  M0_M    ', x(12)*RAD2DEG, ' deg', x_true(12)*RAD2DEG, ' deg', err_deg, ' deg'
+  print '(A,ES20.12)', '  mu_EM   ', x(13)
+  print '(A,ES20.12,A,F8.4,A)', '  mu_true ', x_true(13), &
+       '  err: ', (x(13)/x_true(13)-1.0_dp)*100.0_dp, '%'
+  print '(A,F12.1,A,F12.1,A,F8.4,A)', &
+       '  a_M     ', x(14), ' km  true: ', x_true(14), ' km  err: ', &
+       (x(14)/x_true(14)-1.0_dp)*100.0_dp, '%'
 
   ! ── Derived masses ──
-  gm_earth_est = x(12) - GM_MOON
+  gm_earth_est = x(13) - GM_MOON
   gm_sun_est   = x(6) - gm_earth_est
 
   print '(/,A)', '  ── Derived masses ──'
@@ -1199,13 +1233,13 @@ program sun_ekf_3body
   ! ── Derived periods ──
   print '(/,A)', '  ── Orbital periods ──'
   print '(A,F12.3,A)', '    Earth period = ', &
-       TAU / sqrt(x(6) / a_earth**3) / DAY_S, ' days'
+       TAU / sqrt(x(6) / x(7)**3) / DAY_S, ' days'
   print '(A,F12.3,A)', '    (true)       = ', &
-       TAU / sqrt(x_true(6) / a_earth**3) / DAY_S, ' days'
+       TAU / sqrt(x_true(6) / x_true(7)**3) / DAY_S, ' days'
   print '(A,F12.3,A)', '    Moon period  = ', &
-       TAU / sqrt(x(12) / a_moon**3) / DAY_S, ' days'
+       TAU / sqrt(x(13) / x(14)**3) / DAY_S, ' days'
   print '(A,F12.3,A)', '    (true)       = ', &
-       TAU / sqrt(x_true(12) / a_moon**3) / DAY_S, ' days'
+       TAU / sqrt(x_true(13) / x_true(14)**3) / DAY_S, ' days'
 
   ! ── 1-sigma uncertainties ──
   print '(/,A)', '  1-sigma uncertainties (from covariance):'
@@ -1217,14 +1251,51 @@ program sun_ekf_3body
   print '(A,F8.4,A)', '    sigma_M0_E  = ', sqrt(max(0.0_dp, P_cov(5,5)))*RAD2DEG, ' deg'
   print '(A,ES10.3,A,F8.5,A)', '    sigma_mu_SE = ', sqrt(max(0.0_dp, P_cov(6,6))), &
        '  (', sqrt(max(0.0_dp, P_cov(6,6)))/x(6)*100.0_dp, '%)'
+  print '(A,ES10.3,A,F8.5,A)', '    sigma_a_E   = ', sqrt(max(0.0_dp, P_cov(7,7))), &
+       '  (', sqrt(max(0.0_dp, P_cov(7,7)))/x(7)*100.0_dp, '%)'
   print '(A)', '  ── Moon ──'
-  print '(A,ES10.3)', '    sigma_e_M   = ', sqrt(max(0.0_dp, P_cov(7,7)))
-  print '(A,F8.4,A)', '    sigma_i_M   = ', sqrt(max(0.0_dp, P_cov(8,8)))*RAD2DEG, ' deg'
-  print '(A,F8.4,A)', '    sigma_Om_M  = ', sqrt(max(0.0_dp, P_cov(9,9)))*RAD2DEG, ' deg'
-  print '(A,F8.4,A)', '    sigma_w_M   = ', sqrt(max(0.0_dp, P_cov(10,10)))*RAD2DEG, ' deg'
-  print '(A,F8.4,A)', '    sigma_M0_M  = ', sqrt(max(0.0_dp, P_cov(11,11)))*RAD2DEG, ' deg'
-  print '(A,ES10.3,A,F8.5,A)', '    sigma_mu_EM = ', sqrt(max(0.0_dp, P_cov(12,12))), &
-       '  (', sqrt(max(0.0_dp, P_cov(12,12)))/x(12)*100.0_dp, '%)'
+  print '(A,ES10.3)', '    sigma_e_M   = ', sqrt(max(0.0_dp, P_cov(8,8)))
+  print '(A,F8.4,A)', '    sigma_i_M   = ', sqrt(max(0.0_dp, P_cov(9,9)))*RAD2DEG, ' deg'
+  print '(A,F8.4,A)', '    sigma_Om_M  = ', sqrt(max(0.0_dp, P_cov(10,10)))*RAD2DEG, ' deg'
+  print '(A,F8.4,A)', '    sigma_w_M   = ', sqrt(max(0.0_dp, P_cov(11,11)))*RAD2DEG, ' deg'
+  print '(A,F8.4,A)', '    sigma_M0_M  = ', sqrt(max(0.0_dp, P_cov(12,12)))*RAD2DEG, ' deg'
+  print '(A,ES10.3,A,F8.5,A)', '    sigma_mu_EM = ', sqrt(max(0.0_dp, P_cov(13,13))), &
+       '  (', sqrt(max(0.0_dp, P_cov(13,13)))/x(13)*100.0_dp, '%)'
+  print '(A,ES10.3,A,F8.5,A)', '    sigma_a_M   = ', sqrt(max(0.0_dp, P_cov(14,14))), &
+       '  (', sqrt(max(0.0_dp, P_cov(14,14)))/x(14)*100.0_dp, '%)'
+
+  ! Correlation matrix
+  param_names(1)  = '  e_E  '
+  param_names(2)  = '  i_E  '
+  param_names(3)  = '  Om_E '
+  param_names(4)  = '  w_E  '
+  param_names(5)  = '  M0_E '
+  param_names(6)  = '  muSE '
+  param_names(7)  = '  a_E  '
+  param_names(8)  = '  e_M  '
+  param_names(9)  = '  i_M  '
+  param_names(10) = '  Om_M '
+  param_names(11) = '  w_M  '
+  param_names(12) = '  M0_M '
+  param_names(13) = '  muEM '
+  param_names(14) = '  a_M  '
+  do i = 1, NS
+    sig_i_v = sqrt(max(0.0_dp, P_cov(i,i)))
+    do j = 1, NS
+      sig_j_v = sqrt(max(0.0_dp, P_cov(j,j)))
+      if (sig_i_v > 0.0_dp .and. sig_j_v > 0.0_dp) then
+        corr_mat(i,j) = P_cov(i,j) / (sig_i_v * sig_j_v)
+      else
+        corr_mat(i,j) = 0.0_dp
+      end if
+    end do
+  end do
+
+  print '(/,A)', '  Correlation matrix:'
+  print '(A,14(A7,1X))', '          ', (param_names(j), j=1,NS)
+  do i = 1, NS
+    print '(A,14F8.4)', param_names(i), (corr_mat(i,j), j=1,NS)
+  end do
 
   print '(/,A)', '  Note: "True" elements are osculating at epoch.'
   print '(A)',   '  The EKF estimates best-fit MEAN elements over the arc.'
@@ -1263,12 +1334,12 @@ contains
 
     print '(/,A,A)', '  ', trim(stage_name)
     print '(A)', '  ──────────────────────────────────────────────────────────────────────────'
-    print '(A)', '   Obs#  winRMS_a" winRMS_z"  e_E_err%  muSE_err%  e_M_err%  muEM_err%'
+    print '(A)', '   Obs#  winRMS_a" winRMS_z"  e_E_err%  muSE_err%  aE_err%   e_M_err%  muEM_err%  aM_err%'
 
     do kk = 1, n_obs
       P_pred = Pv + Q_noise
 
-      call predict_altaz(xv, a_earth, a_moon, t_epoch, obs_jds(kk), &
+      call predict_altaz(xv, t_epoch, obs_jds(kk), &
                           lat_obs, lon_obs, obs_bodies(kk), alt_pred, az_pred)
 
       innov(1) = obs_alts(kk) - alt_pred
@@ -1282,7 +1353,7 @@ contains
         if (.not. act(jj)) cycle
         xp = xv
         xp(jj) = xp(jj) + delta(jj)
-        call predict_altaz(xp, a_earth, a_moon, t_epoch, obs_jds(kk), &
+        call predict_altaz(xp, t_epoch, obs_jds(kk), &
                             lat_obs, lon_obs, obs_bodies(kk), alt_p, az_p)
         H(1,jj) = (alt_p - alt_pred) / delta(jj)
         H(2,jj) = (az_p  - az_pred)  / delta(jj)
@@ -1314,15 +1385,18 @@ contains
       xv(4)  = mod(xv(4), TAU);  if (xv(4)  < 0.0_dp) xv(4)  = xv(4)  + TAU
       xv(5)  = mod(xv(5), TAU);  if (xv(5)  < 0.0_dp) xv(5)  = xv(5)  + TAU
       ! Moon angles
-      xv(9)  = mod(xv(9), TAU);  if (xv(9)  < 0.0_dp) xv(9)  = xv(9)  + TAU
       xv(10) = mod(xv(10), TAU); if (xv(10) < 0.0_dp) xv(10) = xv(10) + TAU
       xv(11) = mod(xv(11), TAU); if (xv(11) < 0.0_dp) xv(11) = xv(11) + TAU
+      xv(12) = mod(xv(12), TAU); if (xv(12) < 0.0_dp) xv(12) = xv(12) + TAU
       ! Eccentricities > 0
       if (xv(1)  < 1.0d-8) xv(1)  = 1.0d-8
-      if (xv(7)  < 1.0d-8) xv(7)  = 1.0d-8
+      if (xv(8)  < 1.0d-8) xv(8)  = 1.0d-8
       ! mu > 0
       if (xv(6)  < 0.0_dp) xv(6)  = x_true(6) * 0.9_dp
-      if (xv(12) < 0.0_dp) xv(12) = x_true(12) * 0.9_dp
+      if (xv(13) < 0.0_dp) xv(13) = x_true(13) * 0.9_dp
+      ! a > 0
+      if (xv(7)  < 0.0_dp) xv(7)  = x_true(7) * 0.9_dp
+      if (xv(14) < 0.0_dp) xv(14) = x_true(14) * 0.9_dp
 
       ! Covariance update
       KH = matmul(K_gain, H)
@@ -1338,14 +1412,16 @@ contains
       if (mod(n_proc, 200) == 0 .or. n_proc == 1 .or. n_proc == n_obs) then
         jj = min(n_proc, 200)
         if (n_proc == 1) jj = 1
-        print '(I7,2F10.1,4F10.4)', &
+        print '(I7,2F10.1,6F10.4)', &
              n_proc, &
              sqrt(win_a / jj) * 3600.0_dp, &
              sqrt(win_z / jj) * 3600.0_dp, &
              (xv(1)/x_true(1) - 1.0_dp) * 100.0_dp, &
              (xv(6)/x_true(6) - 1.0_dp) * 100.0_dp, &
              (xv(7)/x_true(7) - 1.0_dp) * 100.0_dp, &
-             (xv(12)/x_true(12) - 1.0_dp) * 100.0_dp
+             (xv(8)/x_true(8) - 1.0_dp) * 100.0_dp, &
+             (xv(13)/x_true(13) - 1.0_dp) * 100.0_dp, &
+             (xv(14)/x_true(14) - 1.0_dp) * 100.0_dp
         win_a = 0.0_dp; win_z = 0.0_dp
       end if
     end do
