@@ -2,16 +2,16 @@
 ! sun_ekf.f90 — 2-body Sun-Earth EKF with N-body propagation
 ! ═══════════════════════════════════════════════════════════════════════
 !
-! State vector: x = [e, i, Ω, ω, M₀, μ]  (6 elements, all constant)
+! State vector: x = [e, i, Ω, ω, M₀, μ, a]  (7 elements, all constant)
 !   e    = eccentricity
 !   i    = inclination (≈ obliquity ≈ 23.44° in equatorial J2000)
 !   Ω    = longitude of ascending node
 !   ω    = argument of periapsis
 !   M₀   = mean anomaly at reference epoch
 !   μ    = GM_sun + GM_earth (total gravitational parameter)
+!   a    = semi-major axis (km)
 !
 ! Fixed parameters:
-!   a    = semi-major axis (from DE440s)
 !   R_E  = Earth radius (6378.137 km)
 !
 ! Dynamics: F = I (elements are constants of motion in 2-body)
@@ -392,7 +392,7 @@ module kepler_obs_mod
   use constants_mod
   use nbody2_mod, only: NB, propagate_nbody
   implicit none
-  integer, parameter :: NS = 6   ! EKF state dimension
+  integer, parameter :: NS = 7   ! EKF state dimension
   real(dp), parameter :: GM_EARTH_KNOWN = 398600.435507_dp  ! fixed split
 
 contains
@@ -681,12 +681,12 @@ contains
   end function
 
   ! ── Predict Sun alt/az from EKF state ──
-  subroutine predict_sun_altaz(x, a_fixed, t_epoch, jd_obs, lat_deg, lon_deg, &
+  subroutine predict_sun_altaz(x, t_epoch, jd_obs, lat_deg, lon_deg, &
                                 alt_deg, az_deg)
-    real(dp), intent(in)  :: x(NS), a_fixed, t_epoch, jd_obs, lat_deg, lon_deg
+    real(dp), intent(in)  :: x(NS), t_epoch, jd_obs, lat_deg, lon_deg
     real(dp), intent(out) :: alt_deg, az_deg
 
-    real(dp) :: ecc, inc, raan_v, argp_v, M0, mu
+    real(dp) :: ecc, inc, raan_v, argp_v, M0, mu, a_val
     real(dp) :: dt_s
     real(dp) :: r_rel(3), v_rel(3), r_sun(3), v_earth(3)
     real(dp) :: pos_nb(NB,3), vel_nb(NB,3), gm_nb(NB), gm_s
@@ -702,10 +702,10 @@ contains
 
     ! Unpack state
     ecc = x(1); inc = x(2); raan_v = x(3)
-    argp_v = x(4); M0 = x(5); mu = x(6)
+    argp_v = x(4); M0 = x(5); mu = x(6); a_val = x(7)
 
     ! Convert elements at epoch to Cartesian (Earth relative to Sun)
-    call kepler_to_cart(a_fixed, ecc, inc, raan_v, argp_v, M0, mu, r_rel, v_rel)
+    call kepler_to_cart(a_val, ecc, inc, raan_v, argp_v, M0, mu, r_rel, v_rel)
 
     ! Set up N-body initial conditions (barycentric frame)
     gm_s = mu - GM_EARTH_KNOWN
@@ -812,7 +812,7 @@ program sun_ekf
 
   ! State vectors
   real(dp) :: x(NS), x_true(NS), x_init(NS)
-  real(dp) :: a_fixed, t_epoch
+  real(dp) :: t_epoch
 
   ! EKF covariance
   real(dp) :: P_cov(NS,NS), P_pred(NS,NS)
@@ -911,8 +911,6 @@ program sun_ekf
   r_diff = sqrt(sum((r_check - r_rel)**2))
   print '(A,ES10.3,A)', '  Round-trip error: ', r_diff, ' km'
 
-  a_fixed = a_comp
-
   ! True state vector
   x_true(1) = ecc_comp
   x_true(2) = inc_comp
@@ -920,6 +918,7 @@ program sun_ekf
   x_true(4) = argp_comp
   x_true(5) = M0_comp
   x_true(6) = mu_total
+  x_true(7) = a_comp
 
   print '(/,A)',          '  True Keplerian elements (J2000 equatorial):'
   print '(A,F12.8)',      '    e     = ', x_true(1)
@@ -928,7 +927,7 @@ program sun_ekf
   print '(A,F10.5,A)',    '    omega = ', x_true(4) * RAD2DEG, ' deg'
   print '(A,F10.5,A)',    '    M0    = ', x_true(5) * RAD2DEG, ' deg'
   print '(A,ES20.12,A)',  '    mu    = ', x_true(6), ' km^3/s^2'
-  print '(A,F12.1,A)',    '    a     = ', a_fixed, ' km (fixed)'
+  print '(A,F12.1,A)',    '    a     = ', x_true(7), ' km'
 
   ! ── 3. Perturb initial state ──
   x_init(1) = x_true(1) * 1.20_dp            ! e: +20%
@@ -937,6 +936,7 @@ program sun_ekf
   x_init(4) = x_true(4) + 5.0_dp * DEG2RAD   ! omega: +5 deg
   x_init(5) = x_true(5) + 3.0_dp * DEG2RAD   ! M0: +3 deg
   x_init(6) = x_true(6) * 1.005_dp           ! mu: +0.5%
+  x_init(7) = x_true(7)                      ! a: correct value
 
   print '(/,A)', '  Perturbed initial guess:'
   print '(A,F12.8,A,F6.1,A)',  '    e     = ', x_init(1), &
@@ -951,6 +951,7 @@ program sun_ekf
        ' deg  (delta ', (x_init(5)-x_true(5))*RAD2DEG, ' deg)'
   print '(A,ES20.12,A,F6.3,A)', '    mu    = ', x_init(6), &
        '  (', (x_init(6)/x_true(6)-1.0_dp)*100.0_dp, '%)'
+  print '(A,F12.1,A)',          '    a     = ', x_init(7), ' km (correct)'
 
   ! ── 4. Initialize EKF ──
   x = x_init
@@ -962,6 +963,7 @@ program sun_ekf
   P_cov(4,4) = (8.0_dp * DEG2RAD)**2     ! sigma_omega = 8 deg
   P_cov(5,5) = (5.0_dp * DEG2RAD)**2     ! sigma_M0 = 5 deg
   P_cov(6,6) = (0.01_dp * mu_total)**2   ! sigma_mu = 1%
+  P_cov(7,7) = (0.01_dp * a_comp)**2     ! sigma_a = 1% (~1.5M km)
 
   Q_noise = 0.0_dp   ! elements are constant in 2-body
 
@@ -977,6 +979,7 @@ program sun_ekf
   delta(4) = 1.0d-7             ! omega (rad)
   delta(5) = 1.0d-7             ! M0 (rad)
   delta(6) = mu_total * 1.0d-7  ! mu
+  delta(7) = a_comp * 1.0d-7    ! a
 
   I_mat = 0.0_dp
   do i = 1, NS
@@ -986,7 +989,7 @@ program sun_ekf
   ! ── 5. EKF loop ──
   print '(/,A)', '  Running EKF...'
   print '(A)', '  ──────────────────────────────────────────────────────────────────────────'
-  print '(A)', '   Obs#  cumRMSa" cumRMSz"  winRMSa"  winRMSz"  e_err%   i_err(d) mu_err%'
+  print '(A)', '   Obs#  cumRMSa" cumRMSz"  winRMSa"  winRMSz"  e_err%   i_err(d) mu_err%  a_err%'
 
   rms_alt = 0.0_dp
   rms_az  = 0.0_dp
@@ -999,7 +1002,7 @@ program sun_ekf
     P_pred = P_cov + Q_noise
 
     ! ── Predicted observation ──
-    call predict_sun_altaz(x, a_fixed, t_epoch, s_jd(k), lat_obs, lon_obs, &
+    call predict_sun_altaz(x, t_epoch, s_jd(k), lat_obs, lon_obs, &
                             alt_pred, az_pred)
     z_obs(1)  = s_alt(k)
     z_obs(2)  = s_az(k)
@@ -1016,7 +1019,7 @@ program sun_ekf
     do j = 1, NS
       x_pert = x
       x_pert(j) = x_pert(j) + delta(j)
-      call predict_sun_altaz(x_pert, a_fixed, t_epoch, s_jd(k), &
+      call predict_sun_altaz(x_pert, t_epoch, s_jd(k), &
                               lat_obs, lon_obs, alt_p, az_p)
       H(1,j) = (alt_p - alt_pred) / delta(j)
       H(2,j) = (az_p  - az_pred)  / delta(j)
@@ -1051,6 +1054,7 @@ program sun_ekf
     x(5) = mod(x(5), TAU); if (x(5) < 0.0_dp) x(5) = x(5) + TAU
     if (x(1) < 1.0d-8) x(1) = 1.0d-8   ! e > 0
     if (x(6) < 0.0_dp) x(6) = mu_total * 0.9_dp
+    if (x(7) < 0.0_dp) x(7) = a_comp * 0.9_dp
 
     ! ── Covariance update: P = (I - K H) P_pred ──
     KH = matmul(K_gain, H)
@@ -1069,7 +1073,7 @@ program sun_ekf
     if (mod(n_proc, 200) == 0 .or. n_proc == 1 .or. n_proc == n_sun) then
       j = min(n_proc, 200)
       if (n_proc == 1) j = 1
-      print '(I7,2F10.1,2F10.1,F9.4,F10.5,F8.3)', &
+      print '(I7,2F10.1,2F10.1,F9.4,F10.5,F8.3,F8.3)', &
            n_proc, &
            sqrt(rms_alt / n_proc) * 3600.0_dp, &
            sqrt(rms_az  / n_proc) * 3600.0_dp, &
@@ -1077,7 +1081,8 @@ program sun_ekf
            sqrt(win_az  / j) * 3600.0_dp, &
            (x(1)/x_true(1) - 1.0_dp) * 100.0_dp, &
            (x(2) - x_true(2)) * RAD2DEG, &
-           (x(6)/x_true(6) - 1.0_dp) * 100.0_dp
+           (x(6)/x_true(6) - 1.0_dp) * 100.0_dp, &
+           (x(7)/x_true(7) - 1.0_dp) * 100.0_dp
       win_alt = 0.0_dp; win_az = 0.0_dp
     end if
   end do
@@ -1110,14 +1115,17 @@ program sun_ekf
   print '(A,ES20.12)', '  mu      ', x(6)
   print '(A,ES20.12,A,F8.4,A)', '  mu_true ', x_true(6), &
        '  err: ', (x(6)/x_true(6)-1.0_dp)*100.0_dp, '%'
+  print '(A,F12.1,A,F12.1,A,F8.4,A)', &
+       '  a       ', x(7), ' km  true: ', x_true(7), ' km  err: ', &
+       (x(7)/x_true(7)-1.0_dp)*100.0_dp, '%'
 
   print '(/,A)', '  Derived quantities:'
   print '(A,F10.5,A,F10.5,A)', '    Obliquity  = ', x(2)*RAD2DEG, &
        ' deg  (true: ', x_true(2)*RAD2DEG, ' deg)'
   print '(A,F12.3,A)', '    Period     = ', &
-       TAU / sqrt(x(6) / a_fixed**3) / DAY_S, ' days'
+       TAU / sqrt(x(6) / x(7)**3) / DAY_S, ' days'
   print '(A,F12.3,A)', '    (true)     = ', &
-       TAU / sqrt(x_true(6) / a_fixed**3) / DAY_S, ' days'
+       TAU / sqrt(x_true(6) / x_true(7)**3) / DAY_S, ' days'
 
   print '(/,A)', '  1-sigma uncertainties (from covariance):'
   print '(A,ES10.3)',      '    sigma_e     = ', sqrt(max(0.0_dp, P_cov(1,1)))
@@ -1132,6 +1140,9 @@ program sun_ekf
   print '(A,ES10.3,A,F8.5,A)', '    sigma_mu    = ', &
        sqrt(max(0.0_dp, P_cov(6,6))), &
        '  (', sqrt(max(0.0_dp, P_cov(6,6)))/x(6)*100.0_dp, '%)'
+  print '(A,ES10.3,A,F8.5,A)', '    sigma_a     = ', &
+       sqrt(max(0.0_dp, P_cov(7,7))), &
+       '  (', sqrt(max(0.0_dp, P_cov(7,7)))/x(7)*100.0_dp, '%)'
 
   print '(/,A)', '  Note: "True" elements are osculating at epoch. The EKF'
   print '(A)',   '  estimates best-fit MEAN elements over the full arc.'
