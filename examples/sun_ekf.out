@@ -71,6 +71,16 @@
     sigma_mu    =  1.554E+08  ( 0.11559%)
     sigma_a     =  5.769E+04  ( 0.03840%)
 
+  Correlation matrix:
+            e       i       Omega   omega   M0      mu      a    
+  e      1.0000  0.0477  0.0040  0.0405 -0.0831 -0.2073 -0.2134
+  i      0.0477  1.0000  0.0002  0.0146 -0.0155 -0.0361 -0.0363
+  Omega  0.0040  0.0002  1.0000 -0.0784  0.0086  0.0042  0.0041
+  omega  0.0405  0.0146 -0.0784  1.0000 -0.9953 -0.6717 -0.6707
+  M0    -0.0831 -0.0155  0.0086 -0.9953  1.0000  0.6570  0.6564
+  mu    -0.2073 -0.0361  0.0042 -0.6717  0.6570  1.0000  1.0000
+  a     -0.2134 -0.0363  0.0041 -0.6707  0.6564  1.0000  1.0000
+
   Note: "True" elements are osculating at epoch. The EKF
   estimates best-fit MEAN elements over the full arc.
   The e difference (~5%) is expected: planetary perturbations

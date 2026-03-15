@@ -855,6 +855,8 @@ program sun_ekf
   real(dp) :: rms_alt, rms_az, win_alt, win_az
   integer :: n_proc
   real(dp) :: err_omega_deg
+  real(dp) :: corr_mat(NS,NS), sig_i, sig_j
+  character(len=7) :: param_names(NS)
 
   ! ═══════════════════════════════════════════════════
   lat_obs = 40.0_dp
@@ -1143,6 +1145,32 @@ program sun_ekf
   print '(A,ES10.3,A,F8.5,A)', '    sigma_a     = ', &
        sqrt(max(0.0_dp, P_cov(7,7))), &
        '  (', sqrt(max(0.0_dp, P_cov(7,7)))/x(7)*100.0_dp, '%)'
+
+  ! Correlation matrix
+  param_names(1) = '  e    '
+  param_names(2) = '  i    '
+  param_names(3) = '  Omega'
+  param_names(4) = '  omega'
+  param_names(5) = '  M0   '
+  param_names(6) = '  mu   '
+  param_names(7) = '  a    '
+  do i = 1, NS
+    sig_i = sqrt(max(0.0_dp, P_cov(i,i)))
+    do j = 1, NS
+      sig_j = sqrt(max(0.0_dp, P_cov(j,j)))
+      if (sig_i > 0.0_dp .and. sig_j > 0.0_dp) then
+        corr_mat(i,j) = P_cov(i,j) / (sig_i * sig_j)
+      else
+        corr_mat(i,j) = 0.0_dp
+      end if
+    end do
+  end do
+
+  print '(/,A)', '  Correlation matrix:'
+  print '(A,7(A7,1X))', '          ', (param_names(j), j=1,NS)
+  do i = 1, NS
+    print '(A,7F8.4)', param_names(i), (corr_mat(i,j), j=1,NS)
+  end do
 
   print '(/,A)', '  Note: "True" elements are osculating at epoch. The EKF'
   print '(A)',   '  estimates best-fit MEAN elements over the full arc.'
