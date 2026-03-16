@@ -1038,14 +1038,14 @@ program sun_ekf_3body
   x_init(4)  = x_true(4)  + 5.0_dp * DEG2RAD   ! w_E: +5 deg
   x_init(5)  = x_true(5)  + 3.0_dp * DEG2RAD   ! M0_E: +3 deg
   x_init(6)  = x_true(6)  * 1.005_dp            ! mu_SE: +0.5%
-  x_init(7)  = x_true(7) * 1.10_dp               ! a_E: +10%
+  x_init(7)  = x_true(7)  * 1.10_dp             ! a_E: +10%
   x_init(8)  = x_true(8)  * 1.20_dp             ! e_M: +20%
   x_init(9)  = x_true(9)  + 2.0_dp * DEG2RAD    ! i_M: +2 deg
   x_init(10) = x_true(10) + 5.0_dp * DEG2RAD    ! Om_M: +5 deg
   x_init(11) = x_true(11) + 5.0_dp * DEG2RAD    ! w_M: +5 deg
   x_init(12) = x_true(12) + 3.0_dp * DEG2RAD    ! M0_M: +3 deg
   x_init(13) = x_true(13) * 1.005_dp             ! mu_EM: +0.5%
-  x_init(14) = x_true(14) * 1.10_dp                ! a_M: +10%
+  x_init(14) = x_true(14) * 1.10_dp              ! a_M: +10%
 
   print '(/,A)', '  Perturbed initial guess:'
   print '(A)', '  ── Earth ──'
@@ -1093,7 +1093,7 @@ program sun_ekf_3body
 
   Q_noise = 0.0_dp   ! will be set per step from Q_rate * dt
 
-  sigma_obs = 60.0_dp / 3600.0_dp   ! 60 arcsec
+  sigma_obs = 10.0_dp / 3600.0_dp   ! 10 arcsec (model error floor for noise-free obs)
   R_noise = 0.0_dp
   R_noise(1,1) = sigma_obs**2
   R_noise(2,2) = sigma_obs**2
@@ -1123,66 +1123,31 @@ program sun_ekf_3body
   x = x_init
 
   ! ══════════════════════════════════════════════════════════════════════
-  ! STAGE 1: Fit Earth orbit from Sun observations
+  ! Single joint fit: all observations, all parameters active
+  ! This lets the parallactic inequality constrain a_E from the start.
   ! ══════════════════════════════════════════════════════════════════════
   P_cov = 0.0_dp
+  ! Earth orbit
   P_cov(1,1) = (0.005_dp)**2               ! sigma_e = 0.005
   P_cov(2,2) = (3.0_dp * DEG2RAD)**2       ! sigma_i = 3 deg
   P_cov(3,3) = (8.0_dp * DEG2RAD)**2       ! sigma_Omega = 8 deg
   P_cov(4,4) = (8.0_dp * DEG2RAD)**2       ! sigma_omega = 8 deg
   P_cov(5,5) = (5.0_dp * DEG2RAD)**2       ! sigma_M0 = 5 deg
-  P_cov(6,6) = (0.20_dp * mu_se)**2        ! sigma_mu = 20% (equal to a)
+  P_cov(6,6) = (0.20_dp * mu_se)**2        ! sigma_mu = 20%
   P_cov(7,7) = (0.20_dp * a_comp)**2       ! sigma_a_E = 20%
-  ! Moon params frozen (P = 0)
-
-  active = .false.
-  active(1:7) = .true.
-
-  call run_ekf_pass(x, P_cov, n_sun, s_jd, s_alt, s_az, s_body, active, &
-                    'Stage 1: Earth orbit from Sun observations')
-
-  print '(/,A)', '  Stage 1 result:'
-  print '(A,F9.4,A)', '    e_E  err = ', (x(1)/x_true(1)-1.0_dp)*100.0_dp, '%'
-  print '(A,F9.4,A)', '    i_E  err = ', (x(2)-x_true(2))*RAD2DEG, ' deg'
-  print '(A,F9.4,A)', '    mu_SE err= ', (x(6)/x_true(6)-1.0_dp)*100.0_dp, '%'
-  print '(A,F9.4,A)', '    a_E  err = ', (x(7)/x_true(7)-1.0_dp)*100.0_dp, '%'
-
-  ! ══════════════════════════════════════════════════════════════════════
-  ! STAGE 2: Fit Moon orbit from Moon observations
-  ! ══════════════════════════════════════════════════════════════════════
-  ! Initialize Moon covariance (Earth params keep their converged P)
-  P_cov(8,8)   = (0.02_dp)**2                ! sigma_e_m = 0.02
-  P_cov(9,9)   = (5.0_dp * DEG2RAD)**2       ! sigma_i_m = 5 deg
-  P_cov(10,10) = (10.0_dp * DEG2RAD)**2      ! sigma_Om_m = 10 deg
-  P_cov(11,11) = (10.0_dp * DEG2RAD)**2      ! sigma_w_m = 10 deg
-  P_cov(12,12) = (5.0_dp * DEG2RAD)**2       ! sigma_M0_m = 5 deg
-  P_cov(13,13) = (0.20_dp * mu_em)**2        ! sigma_mu_em = 20% (equal to a)
-  P_cov(14,14) = (0.20_dp * a_m_comp)**2     ! sigma_a_M = 20%
-
-  active = .false.
-  active(8:14) = .true.
-
-  call run_ekf_pass(x, P_cov, n_moon, m_jd, m_alt, m_az, m_body, active, &
-                    'Stage 2: Moon orbit from Moon observations')
-
-  print '(/,A)', '  Stage 2 result:'
-  print '(A,F9.4,A)', '    e_M  err = ', (x(8)/x_true(8)-1.0_dp)*100.0_dp, '%'
-  print '(A,F9.4,A)', '    i_M  err = ', (x(9)-x_true(9))*RAD2DEG, ' deg'
-  print '(A,F9.4,A)', '    mu_EM err= ', (x(13)/x_true(13)-1.0_dp)*100.0_dp, '%'
-  print '(A,F9.4,A)', '    a_M  err = ', (x(14)/x_true(14)-1.0_dp)*100.0_dp, '%'
-
-  ! ══════════════════════════════════════════════════════════════════════
-  ! STAGE 3: Joint refinement from all observations
-  ! ══════════════════════════════════════════════════════════════════════
-  ! Inflate covariance to allow cross-correlation adjustment
-  do i = 1, NS
-    P_cov(i,i) = P_cov(i,i) * 4.0_dp   ! 2× larger sigma
-  end do
+  ! Moon orbit
+  P_cov(8,8)   = (0.02_dp)**2              ! sigma_e_m = 0.02
+  P_cov(9,9)   = (5.0_dp * DEG2RAD)**2     ! sigma_i_m = 5 deg
+  P_cov(10,10) = (10.0_dp * DEG2RAD)**2    ! sigma_Om_m = 10 deg
+  P_cov(11,11) = (10.0_dp * DEG2RAD)**2    ! sigma_w_m = 10 deg
+  P_cov(12,12) = (5.0_dp * DEG2RAD)**2     ! sigma_M0_m = 5 deg
+  P_cov(13,13) = (0.20_dp * mu_em)**2      ! sigma_mu_em = 20%
+  P_cov(14,14) = (0.20_dp * a_m_comp)**2   ! sigma_a_M = 20%
 
   active = .true.
 
   call run_ekf_pass(x, P_cov, n_all, all_jd, all_alt, all_az, all_body, active, &
-                    'Stage 3: Joint refinement (all observations)')
+                    'Joint fit: all observations, all parameters')
 
   ! Print iteration summary
   print '(/,A,I2,A)', '  ── Iteration ', iter, ' summary ──'

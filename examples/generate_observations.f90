@@ -1328,9 +1328,9 @@ program generate_observations
   real(dp) :: ma(0:N_SCAN), maz(0:N_SCAN), md(0:N_SCAN)  ! Moon
 
   ! ── Noise parameters ──
-  real(dp), parameter :: BIAS_HALF = 25.0_dp / 3600.0_dp   ! ±25 arcsec in deg
-  real(dp), parameter :: SIGMA_BASE = 20.0_dp / 3600.0_dp  ! 20 arcsec
-  real(dp), parameter :: SIGMA_HOR  = 15.0_dp / 3600.0_dp  ! extra near horizon
+  real(dp), parameter :: BIAS_HALF = 0.0_dp    ! no bias
+  real(dp), parameter :: SIGMA_BASE = 0.0_dp   ! no noise
+  real(dp), parameter :: SIGMA_HOR  = 0.0_dp   ! no noise
   real(dp) :: bias_sa, bias_saz, bias_ma, bias_maz          ! systematic biases
 
   ! ── Work variables ──
