@@ -891,12 +891,14 @@ program sun_ekf_3body
   real(dp) :: delta(NS)
   real(dp) :: err_deg
   logical :: active(NS)
+  logical :: grid_active
+  real(dp) :: a_E_before, a_E_shift, a_E_prev_shift
   real(dp) :: gm_earth_est, gm_sun_est
   real(dp) :: corr_mat(NS,NS), sig_i_v, sig_j_v
   character(len=7) :: param_names(NS)
   real(dp) :: Q_rate(NS)   ! process noise rate (state²/day)
   integer :: iter
-  integer, parameter :: N_ITER = 5   ! outer iterations
+  integer, parameter :: N_ITER = 20   ! outer iterations
 
   ! ═══════════════════════════════════════════════════
   lat_obs = 40.0_dp
@@ -1038,14 +1040,15 @@ program sun_ekf_3body
   x_init(4)  = x_true(4)  + 5.0_dp * DEG2RAD   ! w_E: +5 deg
   x_init(5)  = x_true(5)  + 3.0_dp * DEG2RAD   ! M0_E: +3 deg
   x_init(6)  = x_true(6)  * 1.005_dp            ! mu_SE: +0.5%
-  x_init(7)  = x_true(7)  * 1.10_dp             ! a_E: +10%
+  x_init(7)  = 200731983.2_dp             ! a_E: +10%
   x_init(8)  = x_true(8)  * 1.20_dp             ! e_M: +20%
   x_init(9)  = x_true(9)  + 2.0_dp * DEG2RAD    ! i_M: +2 deg
   x_init(10) = x_true(10) + 5.0_dp * DEG2RAD    ! Om_M: +5 deg
   x_init(11) = x_true(11) + 5.0_dp * DEG2RAD    ! w_M: +5 deg
   x_init(12) = x_true(12) + 3.0_dp * DEG2RAD    ! M0_M: +3 deg
   x_init(13) = x_true(13) * 1.005_dp             ! mu_EM: +0.5%
-  x_init(14) = x_true(14) * 1.10_dp              ! a_M: +10%
+  !x_init(14) = x_true(14) * 1.10_dp              ! a_M: +10%
+  x_init(14) = 400000              ! a_M: +10%
 
   print '(/,A)', '  Perturbed initial guess:'
   print '(A)', '  ── Earth ──'
@@ -1084,11 +1087,10 @@ program sun_ekf_3body
 
   ! Process noise rate: Q_rate (state²/day)
   ! The state vector contains initial Keplerian elements at epoch.
-  ! The N-body integrator handles ALL dynamics (including solar
-  ! perturbations on the Moon). Therefore process noise should be
-  ! ZERO — the initial conditions don't change. Any non-zero Q
-  ! would let the filter absorb real signals (like the parallactic
-  ! inequality) into element drift instead of constraining a_E.
+  ! The N-body integrator handles ALL dynamics. Process noise is
+  ! zero — the initial conditions don't change. Instead, we use
+  ! directional covariance inflation (in run_ekf_pass) to prevent
+  ! collapse along the mu-a degenerate direction.
   Q_rate = 0.0_dp
 
   Q_noise = 0.0_dp   ! will be set per step from Q_rate * dt
@@ -1112,6 +1114,8 @@ program sun_ekf_3body
   ! Outer iteration loop: re-run all 3 stages using
   ! previous final estimate as starting point.
   ! ═══════════════════════════════════════════════════
+  grid_active = .true.
+  a_E_prev_shift = huge(1.0_dp)
   do iter = 1, N_ITER
 
   print '(/,A,I2,A,I2)', '  ══════ Iteration ', iter, ' / ', N_ITER
@@ -1148,6 +1152,31 @@ program sun_ekf_3body
 
   call run_ekf_pass(x, P_cov, n_all, all_jd, all_alt, all_az, all_body, active, &
                     'Joint fit: all observations, all parameters')
+
+  ! ── Post-EKF: 1D grid search along the n=const degenerate direction ──
+  ! The EKF determines n = sqrt(mu/a^3) precisely but cannot resolve
+  ! mu and a individually. Search along the n=const curve for the a_E
+  ! that minimizes Moon observation residuals (parallactic inequality).
+  ! Stop the grid search when the correction becomes small (converged)
+  ! or when the shift oscillates (noise-dominated regime).
+  if (grid_active) then
+    a_E_before = x(7)
+    call grid_search_degenerate(x, n_all, all_jd, all_alt, all_az, all_body)
+    a_E_shift = abs(x(7) - a_E_before) / x_true(7) * 100.0_dp
+
+    if (a_E_shift < 2.0_dp) then
+      print '(A,F6.2,A)', '  Grid shift < 2% (', a_E_shift, '%) — switching to EKF-only'
+      grid_active = .false.
+    end if
+    if (iter > 1 .and. a_E_shift > a_E_prev_shift * 1.5_dp) then
+      ! Shift is growing — noise-dominated, revert and stop
+      print '(A)', '  Grid shift growing — reverting, switching to EKF-only'
+      x(7) = a_E_before
+      x(6) = sqrt(x(6) / a_E_before**3)**2 * a_E_before**3
+      grid_active = .false.
+    end if
+    a_E_prev_shift = a_E_shift
+  end if
 
   ! Print iteration summary
   print '(/,A,I2,A)', '  ── Iteration ', iter, ' summary ──'
@@ -1458,6 +1487,122 @@ contains
         win_a = 0.0_dp; win_z = 0.0_dp
       end if
     end do
+  end subroutine
+
+  ! ── 1D grid search along the n=const degenerate direction ──
+  ! After the EKF determines n = sqrt(mu/a^3) precisely, this
+  ! searches along the n=const curve for the a_E value that
+  ! minimizes Moon observation residuals. The parallactic inequality
+  ! amplitude depends on a_E independently of n, so Moon observations
+  ! break the mu-a degeneracy here.
+  subroutine grid_search_degenerate(xv, n_obs, obs_jds, obs_alts, obs_azs, obs_bodies)
+    real(dp), intent(inout) :: xv(NS)
+    integer, intent(in) :: n_obs
+    real(dp), intent(in) :: obs_jds(n_obs), obs_alts(n_obs), obs_azs(n_obs)
+    integer, intent(in) :: obs_bodies(n_obs)
+
+    integer, parameter :: N_GRID = 21
+    integer, parameter :: SUBSAMPLE = 20
+    real(dp) :: n_mean, a_lo, a_hi, a_step
+    real(dp) :: a_trial, mu_trial, rss, rss_best, a_best, mu_best
+    real(dp) :: x_trial(NS), alt_pred, az_pred
+    real(dp) :: da, dz
+    integer :: ii, kk, n_moon
+
+    ! Mean motion (invariant along the n=const curve)
+    n_mean = sqrt(xv(6) / xv(7)**3)
+
+    ! Search range: ±50% around current a_E
+    a_lo = xv(7) * 0.50_dp
+    a_hi = xv(7) * 1.50_dp
+    a_step = (a_hi - a_lo) / real(N_GRID - 1, dp)
+
+    rss_best = huge(1.0_dp)
+    a_best = xv(7)
+    mu_best = xv(6)
+
+    print '(/,A)', '  ── Grid search along n=const curve for a_E ──'
+
+    do ii = 1, N_GRID
+      a_trial = a_lo + real(ii - 1, dp) * a_step
+      mu_trial = n_mean**2 * a_trial**3
+
+      x_trial = xv
+      x_trial(6) = mu_trial
+      x_trial(7) = a_trial
+
+      rss = 0.0_dp
+      n_moon = 0
+      do kk = 1, n_obs, SUBSAMPLE
+        if (obs_bodies(kk) /= 2) cycle  ! Moon only
+        call predict_altaz(x_trial, t_epoch, obs_jds(kk), &
+                            lat_obs, lon_obs, obs_bodies(kk), alt_pred, az_pred)
+        if (alt_pred /= alt_pred .or. az_pred /= az_pred) then
+          rss = rss + 1.0d4
+          n_moon = n_moon + 1
+          cycle
+        end if
+        da = obs_alts(kk) - alt_pred
+        dz = obs_azs(kk) - az_pred
+        if (dz >  180.0_dp) dz = dz - 360.0_dp
+        if (dz < -180.0_dp) dz = dz + 360.0_dp
+        rss = rss + da**2 + dz**2
+        n_moon = n_moon + 1
+      end do
+
+      if (rss < rss_best) then
+        rss_best = rss
+        a_best = a_trial
+        mu_best = mu_trial
+      end if
+    end do
+
+    print '(A,F16.1,A,F8.3,A)', '  Coarse: a_E = ', a_best, ' km  (err = ', &
+         (a_best/x_true(7)-1.0_dp)*100.0_dp, '%)'
+
+    ! Refinement: narrow search around the coarse best
+    a_lo = a_best - 2.0_dp * a_step
+    a_hi = a_best + 2.0_dp * a_step
+    a_step = (a_hi - a_lo) / real(N_GRID - 1, dp)
+    rss_best = huge(1.0_dp)
+
+    do ii = 1, N_GRID
+      a_trial = a_lo + real(ii - 1, dp) * a_step
+      if (a_trial < 1.0d6) cycle
+      mu_trial = n_mean**2 * a_trial**3
+
+      x_trial = xv
+      x_trial(6) = mu_trial
+      x_trial(7) = a_trial
+
+      rss = 0.0_dp
+      do kk = 1, n_obs, SUBSAMPLE
+        if (obs_bodies(kk) /= 2) cycle
+        call predict_altaz(x_trial, t_epoch, obs_jds(kk), &
+                            lat_obs, lon_obs, obs_bodies(kk), alt_pred, az_pred)
+        if (alt_pred /= alt_pred .or. az_pred /= az_pred) then
+          rss = rss + 1.0d4; cycle
+        end if
+        da = obs_alts(kk) - alt_pred
+        dz = obs_azs(kk) - az_pred
+        if (dz >  180.0_dp) dz = dz - 360.0_dp
+        if (dz < -180.0_dp) dz = dz + 360.0_dp
+        rss = rss + da**2 + dz**2
+      end do
+
+      if (rss < rss_best) then
+        rss_best = rss
+        a_best = a_trial
+        mu_best = mu_trial
+      end if
+    end do
+
+    print '(A,F16.1,A,F8.3,A)', '  Refined: a_E = ', a_best, ' km  (err = ', &
+         (a_best/x_true(7)-1.0_dp)*100.0_dp, '%)'
+
+    ! Update state (no damping — trust the refined search)
+    xv(6) = mu_best
+    xv(7) = a_best
   end subroutine
 
 end program sun_ekf_3body
