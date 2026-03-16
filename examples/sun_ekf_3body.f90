@@ -1083,26 +1083,13 @@ program sun_ekf_3body
   x = x_init
 
   ! Process noise rate: Q_rate (state²/day)
-  ! Sun orbit: 2-body is excellent, no process noise needed
-  ! Moon orbit: solar perturbations cause large element drift
-  ! mu and a are physical constants → zero process noise
+  ! The state vector contains initial Keplerian elements at epoch.
+  ! The N-body integrator handles ALL dynamics (including solar
+  ! perturbations on the Moon). Therefore process noise should be
+  ! ZERO — the initial conditions don't change. Any non-zero Q
+  ! would let the filter absorb real signals (like the parallactic
+  ! inequality) into element drift instead of constraining a_E.
   Q_rate = 0.0_dp
-  ! Earth orbital elements: tiny (Sun-Earth 2-body is very accurate)
-  Q_rate(1) = (1.0d-6)**2                    ! e_E
-  Q_rate(2) = (1.0d-4 * DEG2RAD)**2          ! i_E
-  Q_rate(3) = (1.0d-4 * DEG2RAD)**2          ! Omega_E
-  Q_rate(4) = (1.0d-4 * DEG2RAD)**2          ! omega_E
-  Q_rate(5) = (1.0d-4 * DEG2RAD)**2          ! M0_E
-  Q_rate(6) = 0.0_dp                         ! mu_SE: constant
-  Q_rate(7) = 0.0_dp                         ! a_E: constant
-  ! Moon orbital elements: large (solar perturbations)
-  Q_rate(8)  = (1.0d-3)**2                   ! e_M: evection
-  Q_rate(9)  = (0.01_dp * DEG2RAD)**2        ! i_M
-  Q_rate(10) = (0.1_dp * DEG2RAD)**2         ! Omega_M: node precession
-  Q_rate(11) = (0.2_dp * DEG2RAD)**2         ! omega_M: apse precession
-  Q_rate(12) = (0.1_dp * DEG2RAD)**2         ! M0_M
-  Q_rate(13) = 0.0_dp                        ! mu_EM: constant
-  Q_rate(14) = 0.0_dp                        ! a_M: constant
 
   Q_noise = 0.0_dp   ! will be set per step from Q_rate * dt
 
@@ -1144,7 +1131,7 @@ program sun_ekf_3body
   P_cov(3,3) = (8.0_dp * DEG2RAD)**2       ! sigma_Omega = 8 deg
   P_cov(4,4) = (8.0_dp * DEG2RAD)**2       ! sigma_omega = 8 deg
   P_cov(5,5) = (5.0_dp * DEG2RAD)**2       ! sigma_M0 = 5 deg
-  P_cov(6,6) = (0.05_dp * mu_se)**2        ! sigma_mu = 5%
+  P_cov(6,6) = (0.20_dp * mu_se)**2        ! sigma_mu = 20% (equal to a)
   P_cov(7,7) = (0.20_dp * a_comp)**2       ! sigma_a_E = 20%
   ! Moon params frozen (P = 0)
 
@@ -1169,7 +1156,7 @@ program sun_ekf_3body
   P_cov(10,10) = (10.0_dp * DEG2RAD)**2      ! sigma_Om_m = 10 deg
   P_cov(11,11) = (10.0_dp * DEG2RAD)**2      ! sigma_w_m = 10 deg
   P_cov(12,12) = (5.0_dp * DEG2RAD)**2       ! sigma_M0_m = 5 deg
-  P_cov(13,13) = (0.05_dp * mu_em)**2        ! sigma_mu_em = 5%
+  P_cov(13,13) = (0.20_dp * mu_em)**2        ! sigma_mu_em = 20% (equal to a)
   P_cov(14,14) = (0.20_dp * a_m_comp)**2     ! sigma_a_M = 20%
 
   active = .false.
