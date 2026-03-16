@@ -1095,7 +1095,7 @@ program sun_ekf_3body
 
   Q_noise = 0.0_dp   ! will be set per step from Q_rate * dt
 
-  sigma_obs = 10.0_dp / 3600.0_dp   ! 10 arcsec (model error floor for noise-free obs)
+  sigma_obs = 60.0_dp / 3600.0_dp   ! 60 arcsec = 1 arcmin measurement noise
   R_noise = 0.0_dp
   R_noise(1,1) = sigma_obs**2
   R_noise(2,2) = sigma_obs**2
