@@ -1178,13 +1178,55 @@ program sun_ekf_3body
     a_E_prev_shift = a_E_shift
   end if
 
-  ! Print iteration summary
+  ! Print iteration summary — current values of all parameters and errors
   print '(/,A,I2,A)', '  ── Iteration ', iter, ' summary ──'
-  print '(A,F9.4,A,F9.4,A)', '    Earth:  mu_SE err=', &
-       (x(6)/x_true(6)-1.0_dp)*100.0_dp, '%   a_E err=', &
+  print '(A)', '  Parameter       Value                  True                 Error'
+  print '(A)', '  ─────────────────────────────────────────────────────────────────'
+  print '(A,F12.8,8X,F12.8,8X,F8.4,A)', &
+       '  e_E     ', x(1), x_true(1), (x(1)/x_true(1)-1.0_dp)*100.0_dp, '%'
+  print '(A,F10.5,A,4X,F10.5,A,4X,F8.4,A)', &
+       '  i_E     ', x(2)*RAD2DEG, ' deg', x_true(2)*RAD2DEG, ' deg', &
+       (x(2)-x_true(2))*RAD2DEG, ' deg'
+  err_deg = (x(3) - x_true(3)) * RAD2DEG
+  if (err_deg >  180.0_dp) err_deg = err_deg - 360.0_dp
+  if (err_deg < -180.0_dp) err_deg = err_deg + 360.0_dp
+  print '(A,F10.5,A,4X,F10.5,A,4X,F8.4,A)', &
+       '  Om_E    ', x(3)*RAD2DEG, ' deg', x_true(3)*RAD2DEG, ' deg', err_deg, ' deg'
+  print '(A,F10.5,A,4X,F10.5,A,4X,F8.4,A)', &
+       '  w_E     ', x(4)*RAD2DEG, ' deg', x_true(4)*RAD2DEG, ' deg', &
+       (x(4)-x_true(4))*RAD2DEG, ' deg'
+  print '(A,F10.5,A,4X,F10.5,A,4X,F8.4,A)', &
+       '  M0_E    ', x(5)*RAD2DEG, ' deg', x_true(5)*RAD2DEG, ' deg', &
+       (x(5)-x_true(5))*RAD2DEG, ' deg'
+  print '(A,ES20.12,2X,ES20.12,2X,F8.4,A)', &
+       '  mu_SE   ', x(6), x_true(6), (x(6)/x_true(6)-1.0_dp)*100.0_dp, '%'
+  print '(A,F14.1,A,6X,F14.1,A,6X,F8.4,A)', &
+       '  a_E     ', x(7), ' km', x_true(7), ' km', &
        (x(7)/x_true(7)-1.0_dp)*100.0_dp, '%'
-  print '(A,F9.4,A,F9.4,A)', '    Moon:   mu_EM err=', &
-       (x(13)/x_true(13)-1.0_dp)*100.0_dp, '%   a_M err=', &
+  print '(A,F12.8,8X,F12.8,8X,F8.4,A)', &
+       '  e_M     ', x(8), x_true(8), (x(8)/x_true(8)-1.0_dp)*100.0_dp, '%'
+  print '(A,F10.5,A,4X,F10.5,A,4X,F8.4,A)', &
+       '  i_M     ', x(9)*RAD2DEG, ' deg', x_true(9)*RAD2DEG, ' deg', &
+       (x(9)-x_true(9))*RAD2DEG, ' deg'
+  err_deg = (x(10) - x_true(10)) * RAD2DEG
+  if (err_deg >  180.0_dp) err_deg = err_deg - 360.0_dp
+  if (err_deg < -180.0_dp) err_deg = err_deg + 360.0_dp
+  print '(A,F10.5,A,4X,F10.5,A,4X,F8.4,A)', &
+       '  Om_M    ', x(10)*RAD2DEG, ' deg', x_true(10)*RAD2DEG, ' deg', err_deg, ' deg'
+  err_deg = (x(11) - x_true(11)) * RAD2DEG
+  if (err_deg >  180.0_dp) err_deg = err_deg - 360.0_dp
+  if (err_deg < -180.0_dp) err_deg = err_deg + 360.0_dp
+  print '(A,F10.5,A,4X,F10.5,A,4X,F8.4,A)', &
+       '  w_M     ', x(11)*RAD2DEG, ' deg', x_true(11)*RAD2DEG, ' deg', err_deg, ' deg'
+  err_deg = (x(12) - x_true(12)) * RAD2DEG
+  if (err_deg >  180.0_dp) err_deg = err_deg - 360.0_dp
+  if (err_deg < -180.0_dp) err_deg = err_deg + 360.0_dp
+  print '(A,F10.5,A,4X,F10.5,A,4X,F8.4,A)', &
+       '  M0_M    ', x(12)*RAD2DEG, ' deg', x_true(12)*RAD2DEG, ' deg', err_deg, ' deg'
+  print '(A,ES20.12,2X,ES20.12,2X,F8.4,A)', &
+       '  mu_EM   ', x(13), x_true(13), (x(13)/x_true(13)-1.0_dp)*100.0_dp, '%'
+  print '(A,F14.1,A,6X,F14.1,A,6X,F8.4,A)', &
+       '  a_M     ', x(14), ' km', x_true(14), ' km', &
        (x(14)/x_true(14)-1.0_dp)*100.0_dp, '%'
 
   end do  ! outer iteration loop
