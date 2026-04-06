@@ -397,7 +397,7 @@ module kepler_obs_mod
   use constants_mod
   use nbody3_mod, only: NB, propagate_nbody
   implicit none
-  integer, parameter :: NS = 14   ! EKF state dimension (7 Earth + 7 Moon)
+  integer, parameter :: NS = 15   ! EKF state dimension (7 Earth + 7 Moon + GM_moon)
   real(dp), parameter :: GM_EARTH_KNOWN = 398600.435507_dp
   real(dp), parameter :: GM_MOON_KNOWN  = 4902.800066_dp
 
@@ -719,9 +719,9 @@ contains
     argp_m = x(11); M0_m   = x(12); mu_em  = x(13); a_moon_v = x(14)
 
     ! ═══ Derive individual GMs ═══
-    gm_earth_v = mu_em - GM_MOON_KNOWN
+    gm_moon_v  = x(15)
+    gm_earth_v = mu_em - gm_moon_v
     gm_sun_v   = mu_se - gm_earth_v
-    gm_moon_v  = GM_MOON_KNOWN
 
     ! ═══ Elements → Cartesian at epoch ═══
     ! Earth relative to Sun (from Earth Keplerian elements)
@@ -909,7 +909,7 @@ program sun_ekf_3body
   print '(A,F8.4,A,F8.4)', '  Observer: lat=', lat_obs, ' lon=', lon_obs
   print '(A)', '════════════════════════════════════════════════════════'
   print '(A)', ''
-  print '(A)', '  State vector (14 parameters):'
+  print '(A)', '  State vector (15 parameters):'
   print '(A)', '  ── Earth orbit x(1:7) ──'
   print '(A)', '    e_E   = eccentricity of Earth orbit'
   print '(A)', '    i_E   = inclination to equator (obliquity ~23.44 deg)'
@@ -926,6 +926,8 @@ program sun_ekf_3body
   print '(A)', '    M0_M  = mean anomaly at epoch'
   print '(A)', '    mu_EM = GM_earth + GM_moon (km^3/s^2)'
   print '(A)', '    a_M   = semi-major axis of Moon orbit (km)'
+  print '(A)', '  ── Mass x(15) ──'
+  print '(A)', '    gm_M  = GM_moon (km^3/s^2)'
 
   ! ── 1. Read observations, split by body ──
   call read_observations('observations.dat', obs_all, n_obs_all, 1.0d10)
@@ -1014,6 +1016,7 @@ program sun_ekf_3body
   x_true(10) = raan_m_comp;  x_true(11) = argp_m_comp
   x_true(12) = M0_m_comp;    x_true(13) = mu_em
   x_true(14) = a_m_comp
+  x_true(15) = GM_MOON
 
   print '(/,A)', '  True Keplerian elements (J2000 equatorial):'
   print '(A)', '  ── Earth orbit ──'
@@ -1032,6 +1035,8 @@ program sun_ekf_3body
   print '(A,F10.5,A)',    '    M0_M  = ', x_true(12) * RAD2DEG, ' deg'
   print '(A,ES20.12,A)',  '    mu_EM = ', x_true(13), ' km^3/s^2'
   print '(A,F12.1,A)',    '    a_M   = ', x_true(14), ' km'
+  print '(A)', '  ── Mass ──'
+  print '(A,ES20.12,A)',  '    gm_M  = ', x_true(15), ' km^3/s^2'
 
   ! ── 5. Perturbed initial state ──
   x_init(1)  = x_true(1)  * 1.20_dp            ! e_E: +20%
@@ -1040,15 +1045,15 @@ program sun_ekf_3body
   x_init(4)  = x_true(4)  + 5.0_dp * DEG2RAD   ! w_E: +5 deg
   x_init(5)  = x_true(5)  + 3.0_dp * DEG2RAD   ! M0_E: +3 deg
   x_init(6)  = x_true(6)  * 1.005_dp            ! mu_SE: +0.5%
-  x_init(7)  = 200731983.2_dp             ! a_E: +10%
+  x_init(7)  = x_true(7)  * 1.01_dp             ! a_E: +1%
   x_init(8)  = x_true(8)  * 1.20_dp             ! e_M: +20%
   x_init(9)  = x_true(9)  + 2.0_dp * DEG2RAD    ! i_M: +2 deg
   x_init(10) = x_true(10) + 5.0_dp * DEG2RAD    ! Om_M: +5 deg
   x_init(11) = x_true(11) + 5.0_dp * DEG2RAD    ! w_M: +5 deg
   x_init(12) = x_true(12) + 3.0_dp * DEG2RAD    ! M0_M: +3 deg
   x_init(13) = x_true(13) * 1.005_dp             ! mu_EM: +0.5%
-  !x_init(14) = x_true(14) * 1.10_dp              ! a_M: +10%
-  x_init(14) = 400000              ! a_M: +10%
+  x_init(14) = x_true(14) * 1.01_dp              ! a_M: +1%
+  x_init(15) = x_true(15) * 2.0_dp               ! gm_M: fixed at 2× truth
 
   print '(/,A)', '  Perturbed initial guess:'
   print '(A)', '  ── Earth ──'
@@ -1081,6 +1086,9 @@ program sun_ekf_3body
        '  (', (x_init(13)/x_true(13)-1.0_dp)*100.0_dp, '%)'
   print '(A,F12.1,A,F7.3,A)',  '    a_M   = ', x_init(14), &
        ' km  (', (x_init(14)/x_true(14)-1.0_dp)*100.0_dp, '%)'
+  print '(A)', '  ── Mass ──'
+  print '(A,ES20.12,A,F6.3,A)', '    gm_M  = ', x_init(15), &
+       '  (', (x_init(15)/x_true(15)-1.0_dp)*100.0_dp, '%)'
 
   ! ── 6. Initialize EKF ──
   x = x_init
@@ -1095,7 +1103,7 @@ program sun_ekf_3body
 
   Q_noise = 0.0_dp   ! will be set per step from Q_rate * dt
 
-  sigma_obs = 60.0_dp / 3600.0_dp   ! 60 arcsec = 1 arcmin measurement noise
+  sigma_obs = 1.0_dp / 3600.0_dp   ! 1 arcsec (near-exact observations)
   R_noise = 0.0_dp
   R_noise(1,1) = sigma_obs**2
   R_noise(2,2) = sigma_obs**2
@@ -1109,6 +1117,8 @@ program sun_ekf_3body
   delta(8) = 1.0d-5;  delta(9) = 1.0d-5;  delta(10) = 1.0d-5
   delta(11) = 1.0d-5; delta(12) = 1.0d-5; delta(13) = mu_em * 1.0d-5
   delta(14) = a_m_comp * 1.0d-5
+  ! GM_moon: same scale as Moon parameters
+  delta(15) = GM_MOON * 1.0d-5
 
   ! ═══════════════════════════════════════════════════
   ! Outer iteration loop: re-run all 3 stages using
@@ -1147,8 +1157,11 @@ program sun_ekf_3body
   P_cov(12,12) = (5.0_dp * DEG2RAD)**2     ! sigma_M0_m = 5 deg
   P_cov(13,13) = (0.20_dp * mu_em)**2      ! sigma_mu_em = 20%
   P_cov(14,14) = (0.20_dp * a_m_comp)**2   ! sigma_a_M = 20%
+  ! GM_moon
+  P_cov(15,15) = (0.01_dp * GM_MOON)**2     ! sigma_gm_moon = 1%
 
   active = .true.
+  active(15) = .false.   ! fix GM_moon — test observability
 
   call run_ekf_pass(x, P_cov, n_all, all_jd, all_alt, all_az, all_body, active, &
                     'Joint fit: all observations, all parameters')
@@ -1228,6 +1241,8 @@ program sun_ekf_3body
   print '(A,F14.1,A,6X,F14.1,A,6X,F8.4,A)', &
        '  a_M     ', x(14), ' km', x_true(14), ' km', &
        (x(14)/x_true(14)-1.0_dp)*100.0_dp, '%'
+  print '(A,ES20.12,2X,ES20.12,2X,F8.4,A)', &
+       '  gm_M    ', x(15), x_true(15), (x(15)/x_true(15)-1.0_dp)*100.0_dp, '%'
 
   end do  ! outer iteration loop
 
@@ -1296,8 +1311,12 @@ program sun_ekf_3body
        '  a_M     ', x(14), ' km  true: ', x_true(14), ' km  err: ', &
        (x(14)/x_true(14)-1.0_dp)*100.0_dp, '%'
 
-  ! ── Derived masses ──
-  gm_earth_est = x(13) - GM_MOON
+  ! ── GM_moon ──
+  print '(/,A)', '  ── GM_moon (fitted) ──'
+  print '(A,ES20.12)', '  gm_M    ', x(15)
+  print '(A,ES20.12,A,F8.4,A)', '  gm_true ', x_true(15), &
+       '  err: ', (x(15)/x_true(15)-1.0_dp)*100.0_dp, '%'
+  gm_earth_est = x(13) - x(15)
   gm_sun_est   = x(6) - gm_earth_est
 
   print '(/,A)', '  ── Derived masses ──'
@@ -1305,7 +1324,8 @@ program sun_ekf_3body
        '  (true: ', GM_SUN, ')  err: ', (gm_sun_est/GM_SUN-1.0_dp)*100.0_dp, '%'
   print '(A,ES15.6,A,ES15.6,A,F8.4,A)', '  GM_earth = ', gm_earth_est, &
        '  (true: ', GM_EARTH, ')  err: ', (gm_earth_est/GM_EARTH-1.0_dp)*100.0_dp, '%'
-  print '(A,ES15.6,A)',  '  GM_moon  = ', GM_MOON, '  (fixed)'
+  print '(A,ES15.6,A,ES15.6,A,F8.4,A)', '  GM_moon  = ', x(15), &
+       '  (true: ', GM_MOON, ')  err: ', (x(15)/GM_MOON-1.0_dp)*100.0_dp, '%'
 
   ! ── Derived periods ──
   print '(/,A)', '  ── Orbital periods ──'
@@ -1340,6 +1360,9 @@ program sun_ekf_3body
        '  (', sqrt(max(0.0_dp, P_cov(13,13)))/x(13)*100.0_dp, '%)'
   print '(A,ES10.3,A,F8.5,A)', '    sigma_a_M   = ', sqrt(max(0.0_dp, P_cov(14,14))), &
        '  (', sqrt(max(0.0_dp, P_cov(14,14)))/x(14)*100.0_dp, '%)'
+  print '(A)', '  ── Mass ──'
+  print '(A,ES10.3,A,F8.5,A)', '    sigma_gm_M  = ', sqrt(max(0.0_dp, P_cov(15,15))), &
+       '  (', sqrt(max(0.0_dp, P_cov(15,15)))/x(15)*100.0_dp, '%)'
 
   ! Correlation matrix
   param_names(1)  = '  e_E  '
@@ -1356,6 +1379,7 @@ program sun_ekf_3body
   param_names(12) = '  M0_M '
   param_names(13) = '  muEM '
   param_names(14) = '  a_M  '
+  param_names(15) = '  gm_M '
   do i = 1, NS
     sig_i_v = sqrt(max(0.0_dp, P_cov(i,i)))
     do j = 1, NS
@@ -1369,9 +1393,9 @@ program sun_ekf_3body
   end do
 
   print '(/,A)', '  Correlation matrix:'
-  print '(A,14(A7,1X))', '          ', (param_names(j), j=1,NS)
+  print '(A,15(A7,1X))', '          ', (param_names(j), j=1,NS)
   do i = 1, NS
-    print '(A,14F8.4)', param_names(i), (corr_mat(i,j), j=1,NS)
+    print '(A,15F8.4)', param_names(i), (corr_mat(i,j), j=1,NS)
   end do
 
   print '(/,A)', '  Note: "True" elements are osculating at epoch.'
@@ -1413,7 +1437,7 @@ contains
 
     print '(/,A,A)', '  ', trim(stage_name)
     print '(A)', '  ──────────────────────────────────────────────────────────────────────────'
-    print '(A)', '   Obs#  winRMS_a" winRMS_z"  e_E_err%  muSE_err%  aE_err%   e_M_err%  muEM_err%  aM_err%'
+    print '(A)', '   Obs#  winRMS_a" winRMS_z"  e_E_err%  muSE_err%  aE_err%   e_M_err%  muEM_err%  aM_err%  gmM_err%'
 
     do kk = 1, n_obs
       ! Time-dependent process noise
@@ -1501,6 +1525,8 @@ contains
       ! a > 0
       if (xv(7)  < 0.0_dp) xv(7)  = x_true(7) * 0.9_dp
       if (xv(14) < 0.0_dp) xv(14) = x_true(14) * 0.9_dp
+      ! GM_moon > 0
+      if (xv(15) < 0.0_dp) xv(15) = x_true(15) * 0.9_dp
 
       ! Covariance update
       KH = matmul(K_gain, H)
@@ -1516,7 +1542,7 @@ contains
       if (mod(n_proc, 200) == 0 .or. n_proc == 1 .or. n_proc == n_obs) then
         jj = min(n_proc, 200)
         if (n_proc == 1) jj = 1
-        print '(I7,2F10.1,6F10.4)', &
+        print '(I7,2F10.1,7F10.4)', &
              n_proc, &
              sqrt(win_a / jj) * 3600.0_dp, &
              sqrt(win_z / jj) * 3600.0_dp, &
@@ -1525,7 +1551,8 @@ contains
              (xv(7)/x_true(7) - 1.0_dp) * 100.0_dp, &
              (xv(8)/x_true(8) - 1.0_dp) * 100.0_dp, &
              (xv(13)/x_true(13) - 1.0_dp) * 100.0_dp, &
-             (xv(14)/x_true(14) - 1.0_dp) * 100.0_dp
+             (xv(14)/x_true(14) - 1.0_dp) * 100.0_dp, &
+             (xv(15)/x_true(15) - 1.0_dp) * 100.0_dp
         win_a = 0.0_dp; win_z = 0.0_dp
       end if
     end do
