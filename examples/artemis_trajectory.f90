@@ -320,6 +320,8 @@ program artemis_trajectory
 
   type(spk_kernel) :: kernel
 
+  integer, parameter  :: MDT_OFFSET = -6 * 3600  ! Mountain Daylight Time = UTC−6
+
   integer :: n_pts, launch_ts
   integer :: i, u_in, u_out
   integer :: ts_i
@@ -329,6 +331,12 @@ program artemis_trajectory
   real(dp) :: earth_dist, moon_dist, met_s
   real(dp) :: dx, dy, dz
   real(dp) :: cos_eps, sin_eps
+
+  ! Max distance tracking
+  real(dp) :: max_earth_dist
+  integer  :: max_ts, max_met_days, max_met_hrs, max_met_mins
+  real(dp) :: max_met_s
+  integer  :: mdt_ts, mdt_jd_i, mdt_yr, mdt_mo, mdt_day, mdt_hr, mdt_min, mdt_sec
 
   character(len=256) :: exe_dir, bsp_file
   integer :: slen
@@ -362,6 +370,9 @@ program artemis_trajectory
   write(u_out, '(A)') '# Columns: timestamp met_s orion_x orion_y orion_z ' // &
                        'moon_x moon_y moon_z earth_dist_km moon_dist_km velocity_km_s range_rate_km_s'
 
+  max_earth_dist = 0.0_dp
+  max_ts = 0
+
   print *, "Computing trajectory..."
   do i = 1, n_pts
     ! Read one Orion data point
@@ -394,6 +405,12 @@ program artemis_trajectory
     ! Mission Elapsed Time
     met_s = real(ts_i - launch_ts, dp)
 
+    ! Track maximum Earth distance
+    if (earth_dist > max_earth_dist) then
+      max_earth_dist = earth_dist
+      max_ts = ts_i
+    end if
+
     ! Write output row
     write(u_out, '(I12, 1X, F12.1, 10(1X, ES18.10))') &
         ts_i, met_s, ox, oy, oz, &
@@ -407,7 +424,59 @@ program artemis_trajectory
 
   print *, "Wrote", n_pts, " points to artemis_trajectory.dat"
 
+  ! Report maximum Earth distance
+  max_met_s = real(max_ts - launch_ts, dp)
+  max_met_days = int(max_met_s) / 86400
+  max_met_hrs  = mod(int(max_met_s), 86400) / 3600
+  max_met_mins = mod(int(max_met_s), 3600) / 60
+
+  ! Convert max_ts (Unix UTC) to Mountain Daylight Time calendar
+  mdt_ts = max_ts + MDT_OFFSET
+  call unix_to_calendar(mdt_ts, mdt_yr, mdt_mo, mdt_day, mdt_hr, mdt_min, mdt_sec)
+
+  print *, ""
+  print *, "═══ Maximum Earth distance ═══"
+  write(*, '(A, F12.1, A)') "  Distance:  ", max_earth_dist, " km"
+  write(*, '(A, I0, A, I0, A, I2.2, A, I2.2)') &
+      "  MET:       T+", max_met_days, "d ", max_met_hrs, "h ", max_met_mins, "m"
+  write(*, '(A, I4, A, I2.2, A, I2.2, A, I2.2, A, I2.2, A, I2.2, A)') &
+      "  Time:      ", mdt_yr, "-", mdt_mo, "-", mdt_day, &
+      " ", mdt_hr, ":", mdt_min, ":", mdt_sec, " MDT"
+
 contains
+
+  ! Convert Unix timestamp to calendar date/time
+  subroutine unix_to_calendar(ts, yr, mo, dy, hr, mn, sc)
+    integer, intent(in)  :: ts
+    integer, intent(out) :: yr, mo, dy, hr, mn, sc
+    integer :: jd, L, N, I_val, J_val, days, secs
+    real(dp) :: jd_real
+
+    ! Unix timestamp to Julian Day Number
+    days = ts / 86400
+    secs = ts - days * 86400
+    if (secs < 0) then
+      days = days - 1
+      secs = secs + 86400
+    end if
+    jd = days + 2440588  ! JD of Unix day 0 is 2440587.5, noon is +1
+
+    ! Julian Day → calendar (algorithm from Meeus, Astronomical Algorithms)
+    L = jd + 68569
+    N = 4 * L / 146097
+    L = L - (146097 * N + 3) / 4
+    I_val = 4000 * (L + 1) / 1461001
+    L = L - 1461 * I_val / 4 + 31
+    J_val = 80 * L / 2447
+    dy = L - 2447 * J_val / 80
+    L = J_val / 11
+    mo = J_val + 2 - 12 * L
+    yr = 100 * (N - 49) + I_val + L
+
+    hr = secs / 3600
+    mn = mod(secs, 3600) / 60
+    sc = mod(secs, 60)
+  end subroutine
 
   ! TDB − TT correction (USNO Circular 179, eq 2.6)
   function tdb_minus_tt(jd_whole, tt_frac) result(dt)
