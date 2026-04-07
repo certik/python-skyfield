@@ -51,15 +51,21 @@ program test_de441_horizons
   integer :: n_fail
   logical :: file_exists
 
-  ! ── Check for DE441 ─────────────────────────────────────────────────
-  inquire(file='de441_part-2.bsp', exist=file_exists)
+  ! ── Check for DE441s ─────────────────────────────────────────────────
+  inquire(file='de441s.bsp', exist=file_exists)
   if (.not. file_exists) then
-    print '(A)', 'SKIP — de441_part-2.bsp not found (run download_data.sh)'
-    stop
+    ! Fall back to the full part-2 file
+    inquire(file='de441_part-2.bsp', exist=file_exists)
+    if (.not. file_exists) then
+      print '(A)', 'SKIP — de441s.bsp not found (run: fpm run create_de441s)'
+      stop
+    end if
+    call load_nutation('nutation.dat')
+    call spk_open('de441_part-2.bsp', kernel)
+  else
+    call load_nutation('nutation.dat')
+    call spk_open('de441s.bsp', kernel)
   end if
-
-  call load_nutation('nutation.dat')
-  call spk_open('de441_part-2.bsp', kernel)
 
   ! ══════════════════════════════════════════════════════════════════
   !  40°N, 0°E, 0 m — 2025-01-01 12:00 UTC

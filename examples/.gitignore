@@ -1,7 +1,9 @@
 .venv/
 de421.bsp
 de440s.bsp
+de441_part-1.bsp
 de441_part-2.bsp
+de441s.bsp
 *.png
 *.pdf
 nutation.dat
