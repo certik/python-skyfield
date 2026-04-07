@@ -49,14 +49,6 @@ program test_de441_horizons
   real(dp) :: moon_ang_diam_as, moon_alt_deg, moon_az_deg
 
   integer :: n_fail
-  logical :: file_exists
-
-  ! ── Check for DE441s ─────────────────────────────────────────────────
-  inquire(file='de441s.bsp', exist=file_exists)
-  if (.not. file_exists) then
-    print '(A)', 'SKIP — de441s.bsp not found (run: fpm run create_de441s)'
-    stop
-  end if
 
   call load_nutation('nutation.dat')
   call spk_open('de441s.bsp', kernel)
