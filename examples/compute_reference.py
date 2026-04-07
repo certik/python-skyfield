@@ -7,9 +7,14 @@ Uses the same inputs as our Fortran pipeline:
   - JPL EOP2 polar motion and delta_T
   - IAU 2006/2000A precession-nutation (Skyfield's default)
 
-The resulting values serve as the reference for test_de441_horizons.f90.
-Both Skyfield (equinox-based) and our Fortran (CIO-based) implement the
-same IAU standard, so they should agree to sub-milliarcsecond level.
+The resulting values serve as the reference for test_de441_horizons.f90
+and test_compute_from_scratch.f90.  Both Skyfield (equinox-based) and
+our Fortran (CIO-based) implement the same IAU standard, so they should
+agree to sub-milliarcsecond level.
+
+Test cases:
+  1. 40°N, 0°E, 0 m — 2025-01-01 12:00 UTC
+  2. Fredericksburg TX (30.275°N, 98.872°W, 556 m) — 2024-04-08 18:35:07 UTC
 """
 import numpy as np
 from skyfield.api import load, wgs84
@@ -65,10 +70,13 @@ def compute_reference(lat_deg, lon_deg, elev_m,
                + (utc_hour * 3600 + utc_minute * 60 + utc_second) / 86400.0)
     xp_as, yp_as, delta_t, _, _ = load_eop2(eop_file, mjd_utc, leap_seconds)
 
+    jd_utc = julian_day(utc_year, utc_month, utc_day) + \
+        (utc_hour * 3600 + utc_minute * 60 + utc_second) / 86400.0 - 0.5
+
     ts = load.timescale()
     ts.delta_t_function = lambda tt: delta_t
     ts.polar_motion_table = (
-        np.array([2460676.0, 2460678.0]),
+        np.array([jd_utc - 1.0, jd_utc + 1.0]),
         np.array([xp_as, xp_as]),
         np.array([yp_as, yp_as]),
     )
@@ -110,57 +118,58 @@ def julian_day(year, month, day):
 
 
 def main():
-    ref = compute_reference(
-        lat_deg=40.0, lon_deg=0.0, elev_m=0.0,
-        utc_year=2025, utc_month=1, utc_day=1,
-        utc_hour=12, utc_minute=0, utc_second=0,
-        leap_seconds=37,
-        eop_file='latest_eop2.long',
-        ephem_file='de441s.bsp',
-    )
+    cases = [
+        {
+            'label': 'Test 1: 40°N, 0°E, 0 m — 2025-01-01 12:00:00 UTC',
+            'lat_deg': 40.0, 'lon_deg': 0.0, 'elev_m': 0.0,
+            'utc_year': 2025, 'utc_month': 1, 'utc_day': 1,
+            'utc_hour': 12, 'utc_minute': 0, 'utc_second': 0,
+            'leap_seconds': 37,
+        },
+        {
+            'label': 'Test 2: Fredericksburg TX — 2024-04-08 18:35:07 UTC (eclipse)',
+            'lat_deg': 30.2752011, 'lon_deg': -98.8719843, 'elev_m': 556.0,
+            'utc_year': 2024, 'utc_month': 4, 'utc_day': 8,
+            'utc_hour': 18, 'utc_minute': 35, 'utc_second': 7,
+            'leap_seconds': 37,
+        },
+    ]
 
-    print("Skyfield reference values (DE441s, IAU 2006/2000A, EOP2 PM + delta_T)")
-    print(f"Observer: 40°N, 0°E, 0 m — 2025-01-01 12:00:00 UTC")
-    print(f"delta_T = {ref['delta_t']:.6f} s")
-    print(f"PM: xp = {ref['xp_as']:.6f}\", yp = {ref['yp_as']:.6f}\"")
-    print()
-    print(f"Sun  alt  = {ref['sun_alt']:.15f}°")
-    print(f"Sun  az   = {ref['sun_az']:.15f}°")
-    print(f"Sun  dist = {ref['sun_dist']:.17e} AU")
-    print(f"Sun  diam = {ref['sun_diam']:.15f}\"")
-    print(f"Moon alt  = {ref['moon_alt']:.15f}°")
-    print(f"Moon az   = {ref['moon_az']:.15f}°")
-    print(f"Moon dist = {ref['moon_dist']:.17e} AU")
-    print(f"Moon diam = {ref['moon_diam']:.15f}\"")
+    for case in cases:
+        label = case.pop('label')
+        ref = compute_reference(**case, eop_file='latest_eop2.long',
+                                ephem_file='de441s.bsp')
 
-    # JPL Horizons reference (DE441, airless, ITRF93, 40N 0E 0m)
-    hz = {
-        'sun_alt': 27.036034, 'sun_az': 179.049603,
-        'moon_alt': 21.518703, 'moon_az': 157.820214,
-    }
+        print(f"Skyfield reference: {label}")
+        print(f"delta_T = {ref['delta_t']:.6f} s")
+        print(f"PM: xp = {ref['xp_as']:.6f}\", yp = {ref['yp_as']:.6f}\"")
+        print()
+        print(f"Sun  alt  = {ref['sun_alt']:.15f}°")
+        print(f"Sun  az   = {ref['sun_az']:.15f}°")
+        print(f"Sun  dist = {ref['sun_dist']:.17e} AU")
+        print(f"Sun  diam = {ref['sun_diam']:.15f}\"")
+        print(f"Moon alt  = {ref['moon_alt']:.15f}°")
+        print(f"Moon az   = {ref['moon_az']:.15f}°")
+        print(f"Moon dist = {ref['moon_dist']:.17e} AU")
+        print(f"Moon diam = {ref['moon_diam']:.15f}\"")
 
-    print()
-    print("Differences vs JPL Horizons (IAU76/80 internally):")
-    for body, key in [('Sun ', 'sun'), ('Moon', 'moon')]:
-        for coord in ('alt', 'az'):
-            k = f'{key}_{coord}'
-            diff = (ref[k] - hz[k]) * 3600
-            print(f"  {body} {coord:3s}: {diff:+.4f}\"")
-
-    print()
-    print("Fortran-ready constants:")
-    for name, key, fmt in [
-        ('ref_sun_alt',   'sun_alt',   '.15f'),
-        ('ref_sun_az',    'sun_az',    '.15f'),
-        ('ref_sun_dist',  'sun_dist',  '.17e'),
-        ('ref_sun_diam',  'sun_diam',  '.15f'),
-        ('ref_moon_alt',  'moon_alt',  '.15f'),
-        ('ref_moon_az',   'moon_az',   '.15f'),
-        ('ref_moon_dist', 'moon_dist', '.17e'),
-        ('ref_moon_diam', 'moon_diam', '.15f'),
-    ]:
-        val = format(ref[key], fmt)
-        print(f"real(dp), parameter :: {name:15s} = {val}_dp")
+        print()
+        print("Fortran-ready constants:")
+        for name, key, fmt in [
+            ('ref_sun_alt',   'sun_alt',   '.15f'),
+            ('ref_sun_az',    'sun_az',    '.15f'),
+            ('ref_sun_dist',  'sun_dist',  '.17e'),
+            ('ref_sun_diam',  'sun_diam',  '.15f'),
+            ('ref_moon_alt',  'moon_alt',  '.15f'),
+            ('ref_moon_az',   'moon_az',   '.15f'),
+            ('ref_moon_dist', 'moon_dist', '.17e'),
+            ('ref_moon_diam', 'moon_diam', '.15f'),
+        ]:
+            val = format(ref[key], fmt)
+            print(f"real(dp), parameter :: {name:15s} = {val}_dp")
+        print()
+        print('=' * 70)
+        print()
 
 
 if __name__ == '__main__':

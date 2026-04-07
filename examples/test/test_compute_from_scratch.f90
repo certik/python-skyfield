@@ -1,26 +1,50 @@
 ! ═══════════════════════════════════════════════════════════════════════
 !  test_compute_from_scratch.f90
 !
-!  Two-level checks for the astronomical position pipeline:
+!  State-of-the-art apparent-place pipeline using the modern IAU 2006/
+!  2000A CIO-based framework with IERS EOP2 corrections:
 !
-!  1. REGRESSION: computed values must match hard-coded reference values
-!     to the precision of those references (≤ 1e-6 deg / 1e-13 AU).
-!     Any future change to the computation will trigger a failure here.
+!    [TRS] = RPOM × Rz(ERA) × Q(CIP, s) × [CRS]
 !
-!  2. HORIZONS ACCURACY / GEOMETRY: computed values must agree with JPL
-!     Horizons (DE441) to within the currently-achieved accuracy (≤ 1
-!     arcsec for angles, ≤ 1e-9 AU for distances), OR demonstrate the
-!     expected physical geometry (eclipse overlap).
+!  Components:
+!    - IAU 2006 precession + IAU 2000A nutation (Fukushima-Williams NPB)
+!    - CIP corrected by IERS dX/dY from JPL EOP2
+!    - Earth Rotation Angle (ERA, linear in UT1)
+!    - Full polar motion matrix RPOM (xp, yp, TIO locator sp)
+!    - UT1 from JPL EOP2 (TAI-UT1 + 32.184)
+!
+!  This is the current IERS standard and yields the highest accuracy
+!  against independent implementations (Skyfield/ERFA: < 0.001").
+!
+!  Note: JPL Horizons uses a DIFFERENT (legacy) pipeline internally —
+!  IAU 1976 precession, IAU 1980 nutation (106 terms, GPS-corrected),
+!  GMST82 + EQEQ94, and longitude-only polar wobble.  This produces
+!  ~0.01–0.5" differences from our results depending on whether their
+!  GPS nutation corrections and λ-wobble are replicated.  The modern
+!  pipeline here is more accurate than Horizons' legacy framework.
+!
+!  Checks:
+!  1. SKYFIELD/ERFA — computed values must agree with Skyfield (same IAU
+!     2006/2000A standard) to < 0.001" for angles and < 1e-13 AU for
+!     distances.  Reference values from compute_reference.py.
+!  2. HORIZONS — values must agree with JPL Horizons (DE441) to within
+!     0.5" for angles (known IAU model difference) and 1e-9 AU for
+!     distances.
+!  3. ECLIPSE GEOMETRY — Sun-Moon separation confirms eclipse overlap.
 !
 !  Test case 1: 40°N, 0°E, 0 m — 2025-01-01 12:00 UTC
 !  Test case 2: Fredericksburg TX — 2024-04-08 18:35:07 UTC (eclipse max)
+!
+!  Requires: de441s.bsp, latest_eop2.long, nutation.dat
 ! ═══════════════════════════════════════════════════════════════════════
 program test_compute_from_scratch
   use constants_mod
   use linalg_mod
   use spk_reader_mod
   use nutation_mod
+  use eop_mod
   use astro_mod
+  use cio_mod
   implicit none
 
   ! ── Kernel & observer ──────────────────────────────────────────────
@@ -29,15 +53,17 @@ program test_compute_from_scratch
   integer  :: utc_year, utc_month, utc_day
   integer  :: utc_hour, utc_minute, utc_second
   real(dp) :: delta_t
-  integer  :: leap_sec
 
   ! ── Time ───────────────────────────────────────────────────────────
   real(dp) :: utc_frac, tt_frac, tdb_frac, ut1_frac
   integer  :: jd_int
-  real(dp) :: jd_whole, jd_tt, jd_tdb
+  real(dp) :: jd_whole, jd_tt, jd_tdb, mjd
 
   ! ── Orientation ────────────────────────────────────────────────────
-  real(dp) :: M(3,3), d_psi, d_eps, mean_ob, gmst_h, gast_h
+  real(dp) :: M(3,3), d_psi, d_eps, mean_ob
+  real(dp) :: xp_as, yp_as, tai_ut1_s, dX_mas, dY_mas
+  real(dp) :: cip_X, cip_Y, s_cio, sp, era_rad
+  real(dp) :: Q(3,3), RPOM(3,3)
   real(dp) :: R_itrs(3,3), RT(3,3), R_altaz(3,3)
   real(dp) :: itrs_pos(3), itrs_vel(3)
   real(dp) :: obs_gcrs(3), obs_vel_gcrs(3)
@@ -58,9 +84,10 @@ program test_compute_from_scratch
 
   integer :: n_fail
 
-  ! ── Load data files (resolved from CWD = project root) ────────────
+  ! ── Load data files ────────────────────────────────────────────────
   call load_nutation('nutation.dat')
-  call spk_open('de440s.bsp', kernel)
+  call load_jpl_eop('latest_eop2.long')
+  call spk_open('de441s.bsp', kernel)
 
   ! ══════════════════════════════════════════════════════════════════
   !  Test 1: 40°N, 0°E — 2025-01-01 12:00 UTC
@@ -68,8 +95,6 @@ program test_compute_from_scratch
   lat_deg = 40.0_dp;  lon_deg = 0.0_dp;  elev_m = 0.0_dp
   utc_year = 2025;  utc_month = 1;  utc_day = 1
   utc_hour = 12;  utc_minute = 0;  utc_second = 0
-  delta_t  = 69.14980035_dp
-  leap_sec = 37
 
   jd_int   = julian_day(utc_year, utc_month, utc_day)
   jd_whole = real(jd_int, dp)
@@ -77,16 +102,31 @@ program test_compute_from_scratch
               real(utc_minute, dp) * 60.0_dp   + &
               real(utc_second, dp)) / DAY_S - 0.5_dp
 
-  call utc_to_tt (jd_whole, utc_frac, leap_sec, tt_frac)
-  call tt_to_tdb (jd_whole, tt_frac,             tdb_frac)
-  call tt_to_ut1 (jd_whole, tt_frac, delta_t,   ut1_frac)
+  ! EOP2: delta_T = 32.184 + TAI-UT1, plus dX/dY and polar motion
+  mjd = jd_whole + utc_frac - 2400000.5_dp
+  call get_jpl_eop(mjd, xp_as, yp_as, tai_ut1_s, dX_mas, dY_mas)
+  delta_t = 32.184_dp + tai_ut1_s
+
+  call utc_to_tt (jd_whole, utc_frac, 37, tt_frac)
+  call tt_to_tdb (jd_whole, tt_frac,      tdb_frac)
+  call tt_to_ut1 (jd_whole, tt_frac, delta_t, ut1_frac)
   jd_tt  = jd_whole + tt_frac
   jd_tdb = jd_whole + tdb_frac
 
-  call compute_M(jd_tt, jd_tdb, M, d_psi, d_eps, mean_ob)
-  gmst_h = greenwich_mean_sidereal_time(jd_whole, ut1_frac, jd_tdb)
-  gast_h = greenwich_apparent_sidereal_time(gmst_h, d_psi, mean_ob, jd_tt)
-  R_itrs = itrs_rotation(gast_h, M)
+  ! CIO-based GCRS→ITRS: [TRS] = RPOM × Rz(ERA) × Q × [CRS]
+  call compute_npb_fw(jd_tt, jd_tdb, M, d_psi, d_eps, mean_ob)
+  cip_X = M(3,1) + (dX_mas / 1000.0_dp) * ASEC2RAD
+  cip_Y = M(3,2) + (dY_mas / 1000.0_dp) * ASEC2RAD
+
+  s_cio = compute_cio_s(jd_tt, cip_X, cip_Y)
+  Q     = build_cio_matrix(cip_X, cip_Y, s_cio)
+
+  era_rad = earth_rotation_angle(jd_whole, ut1_frac) * TAU
+
+  sp   = tio_locator_sp(jd_tt)
+  RPOM = cio_polar_motion(xp_as, yp_as, sp)
+
+  R_itrs = cio_itrs_rotation(Q, era_rad, RPOM)
 
   call wgs84_to_itrs_au(lat_deg, lon_deg, elev_m, itrs_pos)
   call itrs_velocity_au_per_day(itrs_pos, itrs_vel)
@@ -125,26 +165,32 @@ program test_compute_from_scratch
   n_fail = 0
 
   print '(A)', '--- Test 1: 40N 0E — 2025-01-01 12:00 UTC ---'
-  print '(A)', '=== Regression checks ==='
 
-  call chk_deg('Sun  alt  regression', sun_alt_deg,  27.036032_dp,         1.0e-6_dp,  n_fail)
-  call chk_deg('Sun  az   regression', sun_az_deg,  179.049480_dp,         1.0e-6_dp,  n_fail)
-  call chk_au ('Sun  dist regression', sun_dist,      0.98332708141298_dp, 1.0e-13_dp, n_fail)
-  call chk_as ('Sun  diam regression', sun_ang_diam_as, 1950.991_dp,       1.0e-3_dp,  n_fail)
+  ! Reference: compute_reference.py (Skyfield + DE441s + EOP2 delta_T & PM)
+  ! Both implementations use IAU 2006/2000A; differences arise only from
+  ! equinox-vs-CIO framework and minor algorithmic details.
+  print '(A)', '=== Skyfield/ERFA reference (IAU 2006/2000A) ==='
 
-  call chk_deg('Moon alt  regression', moon_alt_deg, 21.518669_dp,         1.0e-6_dp,  n_fail)
-  call chk_deg('Moon az   regression', moon_az_deg, 157.820103_dp,         1.0e-6_dp,  n_fail)
-  call chk_au ('Moon dist regression', moon_dist,     0.00252475127902_dp, 1.0e-13_dp, n_fail)
-  call chk_as ('Moon diam regression', moon_ang_diam_as, 1897.634_dp,      1.0e-3_dp,  n_fail)
+  call chk_deg('Sun  alt  vs Skyfield', sun_alt_deg,  27.035994125561917_dp, 0.001_dp/3600.0_dp, n_fail)
+  call chk_deg('Sun  az   vs Skyfield', sun_az_deg,  179.049495457992748_dp, 0.001_dp/3600.0_dp, n_fail)
+  call chk_au ('Sun  dist vs Skyfield', sun_dist,      0.983327081438222672_dp, 1.0e-13_dp, n_fail)
+  call chk_as ('Sun  diam vs Skyfield', sun_ang_diam_as, 1950.991328191689490_dp, 1.0e-3_dp, n_fail)
 
+  call chk_deg('Moon alt  vs Skyfield', moon_alt_deg, 21.518667068532995_dp, 0.001_dp/3600.0_dp, n_fail)
+  call chk_deg('Moon az   vs Skyfield', moon_az_deg, 157.820111940143590_dp, 0.001_dp/3600.0_dp, n_fail)
+  call chk_au ('Moon dist vs Skyfield', moon_dist,     0.00252475127961758732_dp, 1.0e-13_dp, n_fail)
+  call chk_as ('Moon diam vs Skyfield', moon_ang_diam_as, 1897.634050540450289_dp, 1.0e-3_dp, n_fail)
+
+  ! Horizons uses a legacy pipeline (IAU 1976/80 + GMST82 + λ-only polar
+  ! wobble), so ~0.14" alt / ~0.4" az model-level differences are expected.
   print '(A)', ''
-  print '(A)', '=== Horizons accuracy checks (DE441 reference) ==='
+  print '(A)', '=== Horizons accuracy (legacy IAU76/80 pipeline, ~0.5" expected) ==='
 
-  call chk_deg('Sun  alt  vs Horizons', sun_alt_deg,  27.036034_dp,         1.0_dp/3600.0_dp, n_fail)
-  call chk_deg('Sun  az   vs Horizons', sun_az_deg,  179.049603_dp,         1.0_dp/3600.0_dp, n_fail)
+  call chk_deg('Sun  alt  vs Horizons', sun_alt_deg,  27.036034_dp,         0.5_dp/3600.0_dp, n_fail)
+  call chk_deg('Sun  az   vs Horizons', sun_az_deg,  179.049603_dp,         0.5_dp/3600.0_dp, n_fail)
   call chk_au ('Sun  dist vs Horizons', sun_dist,      0.98332708143732_dp, 1.0e-9_dp,        n_fail)
-  call chk_deg('Moon alt  vs Horizons', moon_alt_deg, 21.518703_dp,         1.0_dp/3600.0_dp, n_fail)
-  call chk_deg('Moon az   vs Horizons', moon_az_deg, 157.820214_dp,         1.0_dp/3600.0_dp, n_fail)
+  call chk_deg('Moon alt  vs Horizons', moon_alt_deg, 21.518703_dp,         0.5_dp/3600.0_dp, n_fail)
+  call chk_deg('Moon az   vs Horizons', moon_az_deg, 157.820214_dp,         0.5_dp/3600.0_dp, n_fail)
   call chk_au ('Moon dist vs Horizons', moon_dist,     0.00252475127904_dp, 1.0e-9_dp,        n_fail)
   call chk_as ('Sun  diam vs Horizons', sun_ang_diam_as, 1950.991_dp,       1.0_dp,           n_fail)
   call chk_as ('Moon diam vs Horizons', moon_ang_diam_as, 1897.634_dp,      1.0_dp,           n_fail)
@@ -152,7 +198,6 @@ program test_compute_from_scratch
   ! ══════════════════════════════════════════════════════════════════
   !  Test 2: Fredericksburg TX — 2024 April 8 total solar eclipse
   !  Local time 13:35:07 CDT (UTC−5) = 18:35:07 UTC
-  !  delta_T = 69.184 s (37 leap seconds + 32.184 s, DUT1 ≈ 0)
   ! ══════════════════════════════════════════════════════════════════
   print '(A)', ''
   print '(A)', '--- Test 2: Fredericksburg TX — 2024-04-08 total solar eclipse ---'
@@ -160,8 +205,6 @@ program test_compute_from_scratch
   lat_deg = 30.2752011_dp;  lon_deg = -98.8719843_dp;  elev_m = 556.0_dp
   utc_year = 2024;  utc_month = 4;  utc_day = 8
   utc_hour = 18;  utc_minute = 35;  utc_second = 7
-  delta_t  = 69.184_dp
-  leap_sec = 37
 
   jd_int   = julian_day(utc_year, utc_month, utc_day)
   jd_whole = real(jd_int, dp)
@@ -169,16 +212,29 @@ program test_compute_from_scratch
               real(utc_minute, dp) * 60.0_dp   + &
               real(utc_second, dp)) / DAY_S - 0.5_dp
 
-  call utc_to_tt (jd_whole, utc_frac, leap_sec, tt_frac)
+  mjd = jd_whole + utc_frac - 2400000.5_dp
+  call get_jpl_eop(mjd, xp_as, yp_as, tai_ut1_s, dX_mas, dY_mas)
+  delta_t = 32.184_dp + tai_ut1_s
+
+  call utc_to_tt (jd_whole, utc_frac, 37, tt_frac)
   call tt_to_tdb (jd_whole, tt_frac,             tdb_frac)
   call tt_to_ut1 (jd_whole, tt_frac, delta_t,   ut1_frac)
   jd_tt  = jd_whole + tt_frac
   jd_tdb = jd_whole + tdb_frac
 
-  call compute_M(jd_tt, jd_tdb, M, d_psi, d_eps, mean_ob)
-  gmst_h = greenwich_mean_sidereal_time(jd_whole, ut1_frac, jd_tdb)
-  gast_h = greenwich_apparent_sidereal_time(gmst_h, d_psi, mean_ob, jd_tt)
-  R_itrs = itrs_rotation(gast_h, M)
+  call compute_npb_fw(jd_tt, jd_tdb, M, d_psi, d_eps, mean_ob)
+  cip_X = M(3,1) + (dX_mas / 1000.0_dp) * ASEC2RAD
+  cip_Y = M(3,2) + (dY_mas / 1000.0_dp) * ASEC2RAD
+
+  s_cio = compute_cio_s(jd_tt, cip_X, cip_Y)
+  Q     = build_cio_matrix(cip_X, cip_Y, s_cio)
+
+  era_rad = earth_rotation_angle(jd_whole, ut1_frac) * TAU
+
+  sp   = tio_locator_sp(jd_tt)
+  RPOM = cio_polar_motion(xp_as, yp_as, sp)
+
+  R_itrs = cio_itrs_rotation(Q, era_rad, RPOM)
 
   call wgs84_to_itrs_au(lat_deg, lon_deg, elev_m, itrs_pos)
   call itrs_velocity_au_per_day(itrs_pos, itrs_vel)
@@ -214,17 +270,19 @@ program test_compute_from_scratch
   moon_az_deg      = moon_az  * RAD2DEG
 
   ! ── Assertions: Test 2 ─────────────────────────────────────────────
-  print '(A)', '=== Regression checks ==='
 
-  call chk_deg('Sun  alt  regression', sun_alt_deg,  67.315115_dp,         1.0e-6_dp,  n_fail)
-  call chk_deg('Sun  az   regression', sun_az_deg,  178.714820_dp,         1.0e-6_dp,  n_fail)
-  call chk_au ('Sun  dist regression', sun_dist,      1.00147118495962_dp, 1.0e-13_dp, n_fail)
-  call chk_as ('Sun  diam regression', sun_ang_diam_as, 1915.644_dp,       1.0e-3_dp,  n_fail)
+  ! Reference: compute_reference.py (Skyfield + DE441s + EOP2)
+  print '(A)', '=== Skyfield/ERFA reference (IAU 2006/2000A) ==='
 
-  call chk_deg('Moon alt  regression', moon_alt_deg, 67.316105_dp,         1.0e-6_dp,  n_fail)
-  call chk_deg('Moon az   regression', moon_az_deg, 178.718420_dp,         1.0e-6_dp,  n_fail)
-  call chk_au ('Moon dist regression', moon_dist,     0.00236588019913_dp, 1.0e-13_dp, n_fail)
-  call chk_as ('Moon diam regression', moon_ang_diam_as, 2025.063_dp,      1.0e-3_dp,  n_fail)
+  call chk_deg('Sun  alt  vs Skyfield', sun_alt_deg,  67.315014549723372_dp, 0.001_dp/3600.0_dp, n_fail)
+  call chk_deg('Sun  az   vs Skyfield', sun_az_deg,  178.714642811011657_dp, 0.001_dp/3600.0_dp, n_fail)
+  call chk_au ('Sun  dist vs Skyfield', sun_dist,      1.00147118498815613_dp, 1.0e-13_dp, n_fail)
+  call chk_as ('Sun  diam vs Skyfield', sun_ang_diam_as, 1915.644085049606474_dp, 1.0e-3_dp, n_fail)
+
+  call chk_deg('Moon alt  vs Skyfield', moon_alt_deg, 67.316002867115785_dp, 0.001_dp/3600.0_dp, n_fail)
+  call chk_deg('Moon az   vs Skyfield', moon_az_deg, 178.718239425447138_dp, 0.001_dp/3600.0_dp, n_fail)
+  call chk_au ('Moon dist vs Skyfield', moon_dist,     0.00236588022794565010_dp, 1.0e-13_dp, n_fail)
+  call chk_as ('Moon diam vs Skyfield', moon_ang_diam_as, 2025.062928456270583_dp, 1.0e-3_dp, n_fail)
 
   ! Angular separation between Sun and Moon centers (eclipse geometry check)
   ! cos(sep) = sin(alt_s)*sin(alt_m) + cos(alt_s)*cos(alt_m)*cos(az_s - az_m)
