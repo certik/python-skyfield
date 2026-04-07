@@ -36,17 +36,7 @@ program generate_observations
   integer  :: n_seed
   integer, allocatable :: seed(:)
 
-  character(len=256) :: exe_dir, bsp_file
-  integer :: slen
-
-  ! ── Get data-file directory ──
-  call get_command_argument(0, exe_dir)
-  slen = index(exe_dir, '/', back=.true.)
-  if (slen > 0) then
-    exe_dir = exe_dir(1:slen)
-  else
-    exe_dir = './'
-  end if
+  character(len=256) :: bsp_file
 
   ! ── Observer location (Ondrej's backyard — edit as needed) ──
   lat_deg    = 40.0_dp
@@ -60,12 +50,8 @@ program generate_observations
   ! ── Load ephemeris data ──
   call get_command_argument(1, bsp_file)
   if (len_trim(bsp_file) == 0) bsp_file = 'de440s.bsp'
-  call load_nutation(trim(exe_dir) // 'nutation.dat')
-  if (index(trim(bsp_file), '/') > 0) then
-    call spk_open(trim(bsp_file), kernel)
-  else
-    call spk_open(trim(exe_dir) // trim(bsp_file), kernel)
-  end if
+  call load_nutation('nutation.dat')
+  call spk_open(trim(bsp_file), kernel)
 
   ! ── Initialise reproducible RNG ──
   call random_seed(size=n_seed)
@@ -83,7 +69,7 @@ program generate_observations
   call random_number(r_val); bias_maz = (r_val - 0.5_dp) * 2.0_dp * BIAS_HALF
 
   ! ── Open output file ──
-  open(newunit=u_out, file=trim(exe_dir) // 'observations.dat', &
+  open(newunit=u_out, file='observations.dat', &
        status='replace', action='write')
   write(u_out, '(A)')       '# Synthetic backyard observations for Kalman-filter input'
   write(u_out, '(A,F9.4,A,F9.4,A,F6.1)') &
