@@ -225,6 +225,64 @@ program test_de441_horizons
     call chk_as ('Moon diam vs Horizons', mdiam,   1897.634_dp,            1.0e-2_dp,         n_fail)
   end block
 
+  ! ══════════════════════════════════════════════════════════════════
+  !  IAU76/80 + GST94 + λ-only polar wobble
+  !
+  !  Uses the same nutation/precession model that Horizons reports
+  !  (IAU 1976 precession + IAU 1980 nutation + GMST82 + EQEQ94),
+  !  combined with the classical longitude-only polar wobble.
+  !  This is the most direct model match to Horizons.
+  ! ══════════════════════════════════════════════════════════════════
+  print '(A)', ''
+  print '(A)', '=== IAU76/80 + GST94 + λ-only wobble (Horizons model) ==='
+
+  block
+    use iau76_mod
+    real(dp) :: M80(3,3), dpsi80, deps80, meps80
+    real(dp) :: gast80, R80(3,3)
+    real(dp) :: dlam, lon_corr
+    real(dp) :: R_altaz80(3,3)
+    real(dp) :: sa(3), sd, salt, saz, salt_deg, saz_deg, sdiam
+    real(dp) :: ma(3), md, malt, maz, malt_deg, maz_deg, mdiam
+
+    ! IAU76/80 precession-nutation matrix (from GCRS)
+    call compute_M80(jd_tt, M80, dpsi80, deps80, meps80)
+
+    ! GAST = GMST82 + EQEQ94 (equinox-based sidereal time)
+    gast80 = gst94_rad(jd_whole, ut1_frac, jd_tt)
+
+    ! Equinox-based ITRS rotation: R = Rz(-GAST) × NPB  (no RPOM)
+    R80 = mat33_mul(rot_z(-gast80), M80)
+
+    ! Classical λ-only polar wobble
+    dlam     = polar_wobble_longitude(lat_rad, lon_rad, xp_as, yp_as)
+    lon_corr = lon_rad + dlam
+
+    R_altaz80 = altaz_rotation(lat_rad, lon_corr, R80)
+
+    sa       = mat33_vec(R_altaz80, sun_astro)
+    call to_spherical(sa, sd, salt, saz)
+    sdiam    = 2.0_dp * asin(SOLAR_RADIUS_KM / (sd * AU_KM)) * RAD2DEG * 3600.0_dp
+    salt_deg = salt * RAD2DEG
+    saz_deg  = saz  * RAD2DEG
+
+    ma       = mat33_vec(R_altaz80, moon_astro)
+    call to_spherical(ma, md, malt, maz)
+    mdiam    = 2.0_dp * asin(MOON_RADIUS_KM / (md * AU_KM)) * RAD2DEG * 3600.0_dp
+    malt_deg = malt * RAD2DEG
+    maz_deg  = maz  * RAD2DEG
+
+    call chk_deg('Sun  alt  vs Horizons', salt_deg,  27.036034_dp,         0.03_dp/3600.0_dp, n_fail)
+    call chk_deg('Sun  az   vs Horizons', saz_deg,  179.049603_dp,         0.03_dp/3600.0_dp, n_fail)
+    call chk_au ('Sun  dist vs Horizons', sd,         0.98332708143732_dp, 5.0e-11_dp,        n_fail)
+    call chk_as ('Sun  diam vs Horizons', sdiam,   1950.991_dp,            1.0e-2_dp,         n_fail)
+
+    call chk_deg('Moon alt  vs Horizons', malt_deg,  21.518703_dp,         0.03_dp/3600.0_dp, n_fail)
+    call chk_deg('Moon az   vs Horizons', maz_deg,  157.820214_dp,         0.03_dp/3600.0_dp, n_fail)
+    call chk_au ('Moon dist vs Horizons', md,         0.00252475127904_dp, 1.0e-11_dp,        n_fail)
+    call chk_as ('Moon diam vs Horizons', mdiam,   1897.634_dp,            1.0e-2_dp,         n_fail)
+  end block
+
   call spk_close(kernel)
 
   print '(A)', ''
