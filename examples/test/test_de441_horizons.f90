@@ -1,13 +1,21 @@
 ! ═══════════════════════════════════════════════════════════════════════
 !  test_de441_horizons.f90
 !
-!  Verify that our pipeline matches JPL Horizons when using the SAME
-!  ephemeris (DE441) and the SAME Earth Orientation Parameters (JPL EOP2).
+!  Two-level validation of our CIO-based apparent-place pipeline:
 !
-!  With DE441 + JPL EOP2 (polar motion, UT1-UTC, celestial pole offsets),
-!  we use the identical data sources as Horizons.  Remaining differences
-!  come only from minor model implementation details (precession polynomial
-!  coefficients, truncation order).
+!  1. Skyfield/ERFA check  — sub-milliarcsecond tolerance.
+!     Both Skyfield (equinox-based) and this code (CIO-based) implement
+!     the same IAU 2006/2000A standard with the same EOP2 inputs.
+!     Reference values from  compute_reference.py  (Skyfield + DE441s).
+!
+!  2. JPL Horizons check   — 0.5" tolerance.
+!     Horizons uses IAU76/80 precession-nutation internally (corrected
+!     daily by GPS), while we use IAU 2006/2000A.  The ~0.14" alt /
+!     ~0.39" az residual is a known model-level difference confirmed by
+!     Astropy/ERFA giving the same residual.
+!
+!  Uses the CIO-based GCRS→ITRS transformation:
+!     [TRS] = RPOM × R3(ERA) × Q × [CRS]
 !
 !  Requires: de441s.bsp, latest_eop2.long, nutation.dat
 ! ═══════════════════════════════════════════════════════════════════════
@@ -18,6 +26,7 @@ program test_de441_horizons
   use nutation_mod
   use eop_mod
   use astro_mod
+  use cio_mod
   implicit none
 
   type(spk_kernel) :: kernel
@@ -30,7 +39,7 @@ program test_de441_horizons
   integer  :: jd_int
   real(dp) :: jd_whole, jd_tt, jd_tdb, mjd
 
-  real(dp) :: M(3,3), d_psi, d_eps, mean_ob, gmst_h, gast_h
+  real(dp) :: M(3,3), d_psi, d_eps, mean_ob
   real(dp) :: R_itrs(3,3), RT(3,3), R_altaz(3,3)
   real(dp) :: itrs_pos(3), itrs_vel(3)
   real(dp) :: obs_gcrs(3), obs_vel_gcrs(3)
@@ -47,7 +56,8 @@ program test_de441_horizons
   real(dp) :: moon_ang_diam_as, moon_alt_deg, moon_az_deg
 
   real(dp) :: xp_as, yp_as, tai_ut1_s, dX_mas, dY_mas
-  real(dp) :: true_ob, B(3,3), P(3,3), Nmat(3,3)
+  real(dp) :: cip_X, cip_Y, s_cio, sp, era_rad
+  real(dp) :: Q(3,3), RPOM(3,3)
   integer :: n_fail
 
   call load_nutation('nutation.dat')
@@ -56,16 +66,10 @@ program test_de441_horizons
 
   ! ══════════════════════════════════════════════════════════════════
   !  40°N, 0°E, 0 m — 2025-01-01 12:00 UTC
-  !
-  !  Horizons reference (DE441, airless, same observer):
-  !    Sun  alt  27.036034°   az  179.049603°   dist 0.98332708143732 AU
-  !         ang-diam 1950.991"
-  !    Moon alt  21.518703°   az  157.820214°   dist 0.00252475127904 AU
-  !         ang-diam 1897.634"
   ! ══════════════════════════════════════════════════════════════════
   n_fail = 0
 
-  print '(A)', '--- DE441 Horizons check: 40N 0E — 2025-01-01 12:00 UTC ---'
+  print '(A)', '--- DE441 check: 40N 0E — 2025-01-01 12:00 UTC ---'
 
   lat_deg = 40.0_dp;  lon_deg = 0.0_dp;  elev_m = 0.0_dp
   utc_year = 2025;  utc_month = 1;  utc_day = 1
@@ -88,20 +92,20 @@ program test_de441_horizons
   jd_tt  = jd_whole + tt_frac
   jd_tdb = jd_whole + tdb_frac
 
-  ! Nutation with celestial pole offset corrections (dX, dY)
-  call compute_M(jd_tt, jd_tdb, M, d_psi, d_eps, mean_ob)
-  d_psi = d_psi + (dX_mas / 1000.0_dp) * ASEC2RAD / sin(mean_ob)
-  d_eps = d_eps + (dY_mas / 1000.0_dp) * ASEC2RAD
-  true_ob = mean_ob + d_eps
-  Nmat = build_nutation_matrix(mean_ob, true_ob, d_psi)
-  B = icrs_to_j2000_bias()
-  P = compute_precession(jd_tdb)
-  M = mat33_mul(Nmat, mat33_mul(P, B))
+  ! CIO-based GCRS→ITRS: [TRS] = RPOM × Rz(ERA) × Q × [CRS]
+  call compute_npb_fw(jd_tt, jd_tdb, M, d_psi, d_eps, mean_ob)
+  cip_X = M(3,1) + (dX_mas / 1000.0_dp) * ASEC2RAD
+  cip_Y = M(3,2) + (dY_mas / 1000.0_dp) * ASEC2RAD
 
-  gmst_h = greenwich_mean_sidereal_time(jd_whole, ut1_frac, jd_tdb)
-  gast_h = greenwich_apparent_sidereal_time(gmst_h, d_psi, mean_ob, jd_tt)
-  R_itrs = itrs_rotation(gast_h, M)
-  R_itrs = apply_polar_motion(R_itrs, xp_as, yp_as)
+  s_cio = compute_cio_s(jd_tt, cip_X, cip_Y)
+  Q     = build_cio_matrix(cip_X, cip_Y, s_cio)
+
+  era_rad = earth_rotation_angle(jd_whole, ut1_frac) * TAU
+
+  sp   = tio_locator_sp(jd_tt)
+  RPOM = cio_polar_motion(xp_as, yp_as, sp)
+
+  R_itrs = cio_itrs_rotation(Q, era_rad, RPOM)
 
   call wgs84_to_itrs_au(lat_deg, lon_deg, elev_m, itrs_pos)
   call itrs_velocity_au_per_day(itrs_pos, itrs_vel)
@@ -136,12 +140,30 @@ program test_de441_horizons
   moon_alt_deg     = moon_alt * RAD2DEG
   moon_az_deg      = moon_az  * RAD2DEG
 
-  ! ── Assertions ──────────────────────────────────────────────────────
-  ! With DE441 + JPL EOP2 (same data sources as Horizons), remaining
-  ! residuals (~0.14" alt, ~0.39" az) are from model-level differences
-  ! between our equinox-based approach and Horizons' internal CIO-based
-  ! implementation.  Distances agree to ~1e-12 AU.
-  print '(A)', '=== Horizons vs DE441 ==='
+  ! ── Skyfield/ERFA checks (same IAU 2006/2000A model, same EOP2) ──
+  ! Reference: compute_reference.py (Skyfield + DE441s + EOP2 delta_T & PM)
+  ! Both implementations use the same standard; differences arise only from
+  ! equinox-vs-CIO framework (numerically identical) and minor algorithmic
+  ! details (light-travel-time iteration, gravitational deflection bodies).
+  print '(A)', '=== Skyfield/ERFA reference (IAU 2006/2000A) ==='
+
+  call chk_deg('Sun  alt  vs Skyfield', sun_alt_deg,  27.035994084798531_dp, 0.001_dp/3600.0_dp, n_fail)
+  call chk_deg('Sun  az   vs Skyfield', sun_az_deg,  179.049495486576774_dp, 0.001_dp/3600.0_dp, n_fail)
+  call chk_au ('Sun  dist vs Skyfield', sun_dist,      0.983327081438222561_dp, 1.0e-13_dp,       n_fail)
+  call chk_as ('Sun  diam vs Skyfield', sun_ang_diam_as, 1950.991328191689490_dp, 1.0e-3_dp,      n_fail)
+
+  call chk_deg('Moon alt  vs Skyfield', moon_alt_deg, 21.518667068664872_dp, 0.001_dp/3600.0_dp, n_fail)
+  call chk_deg('Moon az   vs Skyfield', moon_az_deg, 157.820111940491898_dp, 0.001_dp/3600.0_dp, n_fail)
+  call chk_au ('Moon dist vs Skyfield', moon_dist,     0.00252475127961758689_dp, 1.0e-13_dp,     n_fail)
+  call chk_as ('Moon diam vs Skyfield', moon_ang_diam_as, 1897.634050540450744_dp, 1.0e-3_dp,     n_fail)
+
+  ! ── JPL Horizons checks (different IAU model → wider tolerance) ────
+  ! Horizons internally uses IAU76/80 precession-nutation corrected by
+  ! GPS, while we use IAU 2006/2000A.  The ~0.14"/~0.39" residual is a
+  ! known model-level difference — Astropy/ERFA shows the same offset.
+  ! Distances and diameters are unaffected (same ephemeris).
+  print '(A)', ''
+  print '(A)', '=== JPL Horizons (IAU76/80, ~0.5" model difference) ==='
 
   call chk_deg('Sun  alt  vs Horizons', sun_alt_deg,  27.036034_dp,         0.5_dp/3600.0_dp, n_fail)
   call chk_deg('Sun  az   vs Horizons', sun_az_deg,  179.049603_dp,         0.5_dp/3600.0_dp, n_fail)
@@ -157,7 +179,7 @@ program test_de441_horizons
 
   print '(A)', ''
   if (n_fail == 0) then
-    print '(A)', 'PASS — all DE441 Horizons checks passed.'
+    print '(A)', 'PASS — all checks passed.'
   else
     print '(I0,A)', n_fail, ' check(s) FAILED.'
     error stop 1
