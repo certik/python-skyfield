@@ -175,6 +175,56 @@ program test_de441_horizons
   call chk_au ('Moon dist vs Horizons', moon_dist,     0.00252475127904_dp, 1.0e-11_dp,        n_fail)
   call chk_as ('Moon diam vs Horizons', moon_ang_diam_as, 1897.634_dp,      1.0e-2_dp,         n_fail)
 
+  ! ══════════════════════════════════════════════════════════════════
+  !  Horizons-matching test using classical λ-only polar wobble
+  !
+  !  Horizons applies polar motion as a longitude correction to the
+  !  local sidereal time:  Δλ = (xp·sin λ + yp·cos λ)·tan φ
+  !  but does NOT correct the geodetic latitude.  This differs from
+  !  the modern RPOM approach by ~0.14" in altitude.
+  !
+  !  Here we build R_itrs WITHOUT RPOM and shift the observer's
+  !  longitude by Δλ in the altaz rotation.
+  ! ══════════════════════════════════════════════════════════════════
+  print '(A)', ''
+  print '(A)', '=== Horizons match (classical λ-only polar wobble) ==='
+
+  block
+    real(dp) :: R_noPM(3,3), dlam, lon_corr
+    real(dp) :: R_altaz_hz(3,3)
+    real(dp) :: sa(3), sd, salt, saz, salt_deg, saz_deg, sdiam
+    real(dp) :: ma(3), md, malt, maz, malt_deg, maz_deg, mdiam
+
+    R_noPM = cio_itrs_rotation_no_pm(Q, era_rad)
+
+    dlam    = polar_wobble_longitude(lat_rad, lon_rad, xp_as, yp_as)
+    lon_corr = lon_rad + dlam
+
+    R_altaz_hz = altaz_rotation(lat_rad, lon_corr, R_noPM)
+
+    sa       = mat33_vec(R_altaz_hz, sun_astro)
+    call to_spherical(sa, sd, salt, saz)
+    sdiam    = 2.0_dp * asin(SOLAR_RADIUS_KM / (sd * AU_KM)) * RAD2DEG * 3600.0_dp
+    salt_deg = salt * RAD2DEG
+    saz_deg  = saz  * RAD2DEG
+
+    ma       = mat33_vec(R_altaz_hz, moon_astro)
+    call to_spherical(ma, md, malt, maz)
+    mdiam    = 2.0_dp * asin(MOON_RADIUS_KM / (md * AU_KM)) * RAD2DEG * 3600.0_dp
+    malt_deg = malt * RAD2DEG
+    maz_deg  = maz  * RAD2DEG
+
+    call chk_deg('Sun  alt  vs Horizons', salt_deg,  27.036034_dp,         0.02_dp/3600.0_dp, n_fail)
+    call chk_deg('Sun  az   vs Horizons', saz_deg,  179.049603_dp,         0.02_dp/3600.0_dp, n_fail)
+    call chk_au ('Sun  dist vs Horizons', sd,         0.98332708143732_dp, 5.0e-11_dp,        n_fail)
+    call chk_as ('Sun  diam vs Horizons', sdiam,   1950.991_dp,            1.0e-2_dp,         n_fail)
+
+    call chk_deg('Moon alt  vs Horizons', malt_deg,  21.518703_dp,         0.02_dp/3600.0_dp, n_fail)
+    call chk_deg('Moon az   vs Horizons', maz_deg,  157.820214_dp,         0.02_dp/3600.0_dp, n_fail)
+    call chk_au ('Moon dist vs Horizons', md,         0.00252475127904_dp, 1.0e-11_dp,        n_fail)
+    call chk_as ('Moon diam vs Horizons', mdiam,   1897.634_dp,            1.0e-2_dp,         n_fail)
+  end block
+
   call spk_close(kernel)
 
   print '(A)', ''

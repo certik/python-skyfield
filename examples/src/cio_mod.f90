@@ -19,7 +19,8 @@ module cio_mod
   private
 
   public :: compute_cio_s, build_cio_matrix, tio_locator_sp, &
-            cio_polar_motion, cio_itrs_rotation, compute_npb_fw
+            cio_polar_motion, cio_itrs_rotation, compute_npb_fw, &
+            polar_wobble_longitude, cio_itrs_rotation_no_pm
 
 contains
 
@@ -244,6 +245,33 @@ contains
     real(dp), intent(in) :: Q(3,3), era_rad, RPOM(3,3)
     real(dp) :: R(3,3)
     R = mat33_mul(RPOM, mat33_mul(rot_z(-era_rad), Q))
+  end function
+
+  ! ── GCRS→ITRS without polar motion (ERA × Q only) ──────────────
+  !  R = rot_z(-ERA) × Q   (CIP-based terrestrial frame, not ITRS)
+  function cio_itrs_rotation_no_pm(Q, era_rad) result(R)
+    real(dp), intent(in) :: Q(3,3), era_rad
+    real(dp) :: R(3,3)
+    R = mat33_mul(rot_z(-era_rad), Q)
+  end function
+
+  ! ── Classical polar-wobble longitude correction ──────────────────
+  !  Δλ = (xp·sin(λ) + yp·cos(λ)) · tan(φ)
+  !
+  !  This is the classical approach used by JPL Horizons: polar motion
+  !  shifts the observer's effective longitude (affecting sidereal time
+  !  / hour angle) but does NOT change the geodetic latitude used for
+  !  the horizon frame.  The modern RPOM matrix approach corrects both
+  !  latitude and longitude; the difference is ~0.14" in altitude.
+  !
+  !  Returns Δλ in radians.
+  function polar_wobble_longitude(lat_rad, lon_rad, xp_as, yp_as) result(dlam)
+    real(dp), intent(in) :: lat_rad, lon_rad, xp_as, yp_as
+    real(dp) :: dlam
+    real(dp) :: xp_rad, yp_rad
+    xp_rad = xp_as * ASEC2RAD
+    yp_rad = yp_as * ASEC2RAD
+    dlam = (xp_rad * sin(lon_rad) + yp_rad * cos(lon_rad)) * tan(lat_rad)
   end function
 
   ! ── NPB matrix via Fukushima-Williams angles (ERFA eraPn06a) ────
