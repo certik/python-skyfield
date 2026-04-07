@@ -214,6 +214,20 @@ contains
     R = mat33_mul(rot_z(-gast_hours * TAU / 24.0_dp), M)
   end function
 
+  ! ── Apply IERS polar motion to an ITRS rotation matrix ──
+  ! IERS: W = R3(-s') · R2(xp) · R1(yp)  where Ri(θ) = rot_i(-θ)
+  ! In our rotation convention: W = rot_y(-xp) · rot_x(-yp)  (dropping s')
+  ! To include PM in R_itrs:  R_new = W^(-1) · R_itrs = rot_x(yp) · rot_y(xp) · R_itrs
+  ! Matches Skyfield's framelib.py: R = mxm(polar_motion_matrix(), R)
+  function apply_polar_motion(R_itrs, xp_as, yp_as) result(R)
+    real(dp), intent(in) :: R_itrs(3,3), xp_as, yp_as
+    real(dp) :: R(3,3), xp_rad, yp_rad, W_inv(3,3)
+    xp_rad = xp_as * ASEC2RAD
+    yp_rad = yp_as * ASEC2RAD
+    W_inv = mat33_mul(rot_x(yp_rad), rot_y(xp_rad))
+    R = mat33_mul(W_inv, R_itrs)
+  end function
+
   ! ── Alt-az rotation ──
   function altaz_rotation(lat_rad, lon_rad, R_itrs) result(R)
     real(dp), intent(in) :: lat_rad, lon_rad, R_itrs(3,3)

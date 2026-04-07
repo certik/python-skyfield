@@ -2,22 +2,22 @@
 !  test_de441_horizons.f90
 !
 !  Verify that our pipeline matches JPL Horizons when using the SAME
-!  ephemeris (DE441).  Horizons uses DE441 internally, so with
-!  de441_part-2.bsp the only remaining differences are:
-!    - Earth orientation (we use a fixed delta_T; Horizons uses EOP)
+!  ephemeris (DE441) and IERS Earth Orientation Parameters.
+!
+!  With DE441 + EOP (polar motion + UT1-UTC from finals2000A.data),
+!  the only remaining differences are:
+!    - EOP source (IERS finals2000A vs JPL's internal eop file)
 !    - Nutation model details
+!  Residuals: alt/az ~0.14-0.39", distances ~1e-12 AU.
 !
-!  Distances and angular diameters should agree to machine precision.
-!  Angles (alt/az) may still differ by ~0.4" due to Earth orientation.
-!
-!  Requires: de441_part-2.bsp  (run download_data.sh to obtain it)
-!  If the file is absent the test prints SKIP and exits successfully.
+!  Requires: de441s.bsp, finals2000A.data, nutation.dat
 ! ═══════════════════════════════════════════════════════════════════════
 program test_de441_horizons
   use constants_mod
   use linalg_mod
   use spk_reader_mod
   use nutation_mod
+  use eop_mod
   use astro_mod
   implicit none
 
@@ -30,7 +30,7 @@ program test_de441_horizons
 
   real(dp) :: utc_frac, tt_frac, tdb_frac, ut1_frac
   integer  :: jd_int
-  real(dp) :: jd_whole, jd_tt, jd_tdb
+  real(dp) :: jd_whole, jd_tt, jd_tdb, mjd
 
   real(dp) :: M(3,3), d_psi, d_eps, mean_ob, gmst_h, gast_h
   real(dp) :: R_itrs(3,3), RT(3,3), R_altaz(3,3)
@@ -48,9 +48,11 @@ program test_de441_horizons
   real(dp) :: moon_altaz(3), moon_dist, moon_alt, moon_az
   real(dp) :: moon_ang_diam_as, moon_alt_deg, moon_az_deg
 
+  real(dp) :: xp_as, yp_as, ut1_utc
   integer :: n_fail
 
   call load_nutation('nutation.dat')
+  call load_eop('finals2000A.data')
   call spk_open('de441s.bsp', kernel)
 
   ! ══════════════════════════════════════════════════════════════════
@@ -69,7 +71,6 @@ program test_de441_horizons
   lat_deg = 40.0_dp;  lon_deg = 0.0_dp;  elev_m = 0.0_dp
   utc_year = 2025;  utc_month = 1;  utc_day = 1
   utc_hour = 12;  utc_minute = 0;  utc_second = 0
-  delta_t  = 69.14980035_dp
   leap_sec = 37
 
   jd_int   = julian_day(utc_year, utc_month, utc_day)
@@ -77,6 +78,11 @@ program test_de441_horizons
   utc_frac = (real(utc_hour,   dp) * 3600.0_dp + &
               real(utc_minute, dp) * 60.0_dp   + &
               real(utc_second, dp)) / DAY_S - 0.5_dp
+
+  ! EOP-based delta_T and polar motion
+  mjd = jd_whole + utc_frac - 2400000.5_dp
+  call get_eop(mjd, xp_as, yp_as, ut1_utc)
+  delta_t = 32.184_dp + real(leap_sec, dp) - ut1_utc
 
   call utc_to_tt (jd_whole, utc_frac, leap_sec, tt_frac)
   call tt_to_tdb (jd_whole, tt_frac,             tdb_frac)
@@ -88,6 +94,7 @@ program test_de441_horizons
   gmst_h = greenwich_mean_sidereal_time(jd_whole, ut1_frac, jd_tdb)
   gast_h = greenwich_apparent_sidereal_time(gmst_h, d_psi, mean_ob, jd_tt)
   R_itrs = itrs_rotation(gast_h, M)
+  R_itrs = apply_polar_motion(R_itrs, xp_as, yp_as)
 
   call wgs84_to_itrs_au(lat_deg, lon_deg, elev_m, itrs_pos)
   call itrs_velocity_au_per_day(itrs_pos, itrs_vel)
@@ -123,19 +130,18 @@ program test_de441_horizons
   moon_az_deg      = moon_az  * RAD2DEG
 
   ! ── Assertions ──────────────────────────────────────────────────────
-  ! Distances depend only on the ephemeris → should match Horizons
-  ! to ~1e-11 AU or better (light-travel-time iteration limit).
-  ! Angular diameters derive from distance → same tight tolerance.
-  ! Alt/az still differ by ~0.4" due to Earth orientation (delta_T vs EOP).
+  ! Distances and diameters are near machine precision (~1e-12 AU).
+  ! Alt/az residuals ~0.14-0.39" from EOP source differences
+  ! (IERS finals2000A vs JPL's internal EOP file used by Horizons).
   print '(A)', '=== Horizons vs DE441 ==='
 
-  call chk_deg('Sun  alt  vs Horizons', sun_alt_deg,  27.036034_dp,         1.0_dp/3600.0_dp, n_fail)
-  call chk_deg('Sun  az   vs Horizons', sun_az_deg,  179.049603_dp,         1.0_dp/3600.0_dp, n_fail)
+  call chk_deg('Sun  alt  vs Horizons', sun_alt_deg,  27.036034_dp,         0.5_dp/3600.0_dp, n_fail)
+  call chk_deg('Sun  az   vs Horizons', sun_az_deg,  179.049603_dp,         0.5_dp/3600.0_dp, n_fail)
   call chk_au ('Sun  dist vs Horizons', sun_dist,      0.98332708143732_dp, 5.0e-11_dp,       n_fail)
   call chk_as ('Sun  diam vs Horizons', sun_ang_diam_as, 1950.991_dp,       1.0e-2_dp,        n_fail)
 
-  call chk_deg('Moon alt  vs Horizons', moon_alt_deg, 21.518703_dp,         1.0_dp/3600.0_dp, n_fail)
-  call chk_deg('Moon az   vs Horizons', moon_az_deg, 157.820214_dp,         1.0_dp/3600.0_dp, n_fail)
+  call chk_deg('Moon alt  vs Horizons', moon_alt_deg, 21.518703_dp,         0.5_dp/3600.0_dp, n_fail)
+  call chk_deg('Moon az   vs Horizons', moon_az_deg, 157.820214_dp,         0.5_dp/3600.0_dp, n_fail)
   call chk_au ('Moon dist vs Horizons', moon_dist,     0.00252475127904_dp, 1.0e-11_dp,       n_fail)
   call chk_as ('Moon diam vs Horizons', moon_ang_diam_as, 1897.634_dp,      1.0e-2_dp,        n_fail)
 
