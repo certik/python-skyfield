@@ -7,11 +7,13 @@
 !     to the precision of those references (≤ 1e-6 deg / 1e-13 AU).
 !     Any future change to the computation will trigger a failure here.
 !
-!  2. HORIZONS ACCURACY: computed values must agree with JPL Horizons
-!     (DE441) to within the currently-achieved accuracy (≤ 1 arcsec for
-!     angles, ≤ 1e-9 AU for distances).
+!  2. HORIZONS ACCURACY / GEOMETRY: computed values must agree with JPL
+!     Horizons (DE441) to within the currently-achieved accuracy (≤ 1
+!     arcsec for angles, ≤ 1e-9 AU for distances), OR demonstrate the
+!     expected physical geometry (eclipse overlap).
 !
-!  Test case: 40°N, 0°E, 0 m — 2025-01-01 12:00 UTC
+!  Test case 1: 40°N, 0°E, 0 m — 2025-01-01 12:00 UTC
+!  Test case 2: Fredericksburg TX — 2024-04-08 18:35:07 UTC (eclipse max)
 ! ═══════════════════════════════════════════════════════════════════════
 program test_compute_from_scratch
   use constants_mod
@@ -52,20 +54,23 @@ program test_compute_from_scratch
   real(dp) :: moon_altaz(3), moon_dist, moon_alt, moon_az
   real(dp) :: moon_ang_diam_as, moon_alt_deg, moon_az_deg
 
+  real(dp) :: sep_as
+
   integer :: n_fail
 
   ! ── Load data files (resolved from CWD = project root) ────────────
   call load_nutation('nutation.dat')
   call spk_open('de440s.bsp', kernel)
 
-  ! ── Test case ──────────────────────────────────────────────────────
+  ! ══════════════════════════════════════════════════════════════════
+  !  Test 1: 40°N, 0°E — 2025-01-01 12:00 UTC
+  ! ══════════════════════════════════════════════════════════════════
   lat_deg = 40.0_dp;  lon_deg = 0.0_dp;  elev_m = 0.0_dp
   utc_year = 2025;  utc_month = 1;  utc_day = 1
   utc_hour = 12;  utc_minute = 0;  utc_second = 0
   delta_t  = 69.14980035_dp
   leap_sec = 37
 
-  ! ── Time conversions ───────────────────────────────────────────────
   jd_int   = julian_day(utc_year, utc_month, utc_day)
   jd_whole = real(jd_int, dp)
   utc_frac = (real(utc_hour,   dp) * 3600.0_dp + &
@@ -78,60 +83,50 @@ program test_compute_from_scratch
   jd_tt  = jd_whole + tt_frac
   jd_tdb = jd_whole + tdb_frac
 
-  ! ── Precession / nutation / sidereal time ──────────────────────────
   call compute_M(jd_tt, jd_tdb, M, d_psi, d_eps, mean_ob)
   gmst_h = greenwich_mean_sidereal_time(jd_whole, ut1_frac, jd_tdb)
   gast_h = greenwich_apparent_sidereal_time(gmst_h, d_psi, mean_ob, jd_tt)
   R_itrs = itrs_rotation(gast_h, M)
 
-  ! ── Observer position ──────────────────────────────────────────────
   call wgs84_to_itrs_au(lat_deg, lon_deg, elev_m, itrs_pos)
   call itrs_velocity_au_per_day(itrs_pos, itrs_vel)
-  RT          = mat33_T(R_itrs)
-  obs_gcrs    = mat33_vec(RT, itrs_pos)
+  RT           = mat33_T(R_itrs)
+  obs_gcrs     = mat33_vec(RT, itrs_pos)
   obs_vel_gcrs = mat33_vec(RT, itrs_vel)
   call earth_position_au(kernel, jd_whole, tdb_frac, earth_pos, earth_vel)
   obs_bcrs_pos = earth_pos + obs_gcrs
   obs_bcrs_vel = earth_vel + obs_vel_gcrs
 
-  ! ── Alt-az frame ───────────────────────────────────────────────────
   lat_rad = lat_deg * DEG2RAD
   lon_rad = lon_deg * DEG2RAD
   R_altaz = altaz_rotation(lat_rad, lon_rad, R_itrs)
 
-  ! ── Sun ────────────────────────────────────────────────────────────
   call correct_light_travel_time(obs_bcrs_pos, obs_bcrs_vel, kernel, &
        jd_whole, tdb_frac, 1, sun_astro, sun_astro_vel, sun_lt)
   call add_deflection(sun_astro, obs_bcrs_pos, obs_gcrs, kernel, jd_whole, tdb_frac)
   call add_aberration(sun_astro, obs_bcrs_vel, sun_lt)
-  sun_altaz      = mat33_vec(R_altaz, sun_astro)
+  sun_altaz       = mat33_vec(R_altaz, sun_astro)
   call to_spherical(sun_altaz, sun_dist, sun_alt, sun_az)
   sun_ang_diam_as = 2.0_dp * asin(SOLAR_RADIUS_KM / (sun_dist * AU_KM)) * RAD2DEG * 3600.0_dp
-  sun_alt_deg    = sun_alt * RAD2DEG
-  sun_az_deg     = sun_az  * RAD2DEG
+  sun_alt_deg     = sun_alt * RAD2DEG
+  sun_az_deg      = sun_az  * RAD2DEG
 
-  ! ── Moon ───────────────────────────────────────────────────────────
   call correct_light_travel_time(obs_bcrs_pos, obs_bcrs_vel, kernel, &
        jd_whole, tdb_frac, 2, moon_astro, moon_astro_vel, moon_lt)
   call add_deflection(moon_astro, obs_bcrs_pos, obs_gcrs, kernel, jd_whole, tdb_frac)
   call add_aberration(moon_astro, obs_bcrs_vel, moon_lt)
-  moon_altaz      = mat33_vec(R_altaz, moon_astro)
+  moon_altaz       = mat33_vec(R_altaz, moon_astro)
   call to_spherical(moon_altaz, moon_dist, moon_alt, moon_az)
   moon_ang_diam_as = 2.0_dp * asin(MOON_RADIUS_KM / (moon_dist * AU_KM)) * RAD2DEG * 3600.0_dp
-  moon_alt_deg    = moon_alt * RAD2DEG
-  moon_az_deg     = moon_az  * RAD2DEG
+  moon_alt_deg     = moon_alt * RAD2DEG
+  moon_az_deg      = moon_az  * RAD2DEG
 
-  call spk_close(kernel)
-
-  ! ══════════════════════════════════════════════════════════════════
-  !  Assertions
-  ! ══════════════════════════════════════════════════════════════════
+  ! ── Assertions: Test 1 ─────────────────────────────────────────────
   n_fail = 0
 
-  print '(A)', '=== Regression checks (must match reference to print precision) ==='
+  print '(A)', '--- Test 1: 40N 0E — 2025-01-01 12:00 UTC ---'
+  print '(A)', '=== Regression checks ==='
 
-  ! Regression reference values: printed at 6 d.p. for deg, 14 for AU.
-  ! Tolerance = 1e-6 deg for angles (= 0.0036"), 1e-13 AU for distances.
   call chk_deg('Sun  alt  regression', sun_alt_deg,  27.036032_dp,         1.0e-6_dp,  n_fail)
   call chk_deg('Sun  az   regression', sun_az_deg,  179.049480_dp,         1.0e-6_dp,  n_fail)
   call chk_au ('Sun  dist regression', sun_dist,      0.98332708141298_dp, 1.0e-13_dp, n_fail)
@@ -143,17 +138,109 @@ program test_compute_from_scratch
   call chk_as ('Moon diam regression', moon_ang_diam_as, 1897.634_dp,      1.0e-3_dp,  n_fail)
 
   print '(A)', ''
-  print '(A)', '=== Horizons accuracy checks (DE441 reference, currently achieved) ==='
+  print '(A)', '=== Horizons accuracy checks (DE441 reference) ==='
 
-  ! Horizons reference values (DE441). Achieved accuracy:
-  !   angles  ≤ 0.45"  →  tolerance 1.0" (3600ths of a degree)
-  !   distance: Sun ≤ 3e-11 AU, Moon ≤ 3e-14 AU  →  tolerance 1e-9 AU
   call chk_deg('Sun  alt  vs Horizons', sun_alt_deg,  27.036034_dp,         1.0_dp/3600.0_dp, n_fail)
   call chk_deg('Sun  az   vs Horizons', sun_az_deg,  179.049603_dp,         1.0_dp/3600.0_dp, n_fail)
   call chk_au ('Sun  dist vs Horizons', sun_dist,      0.98332708143732_dp, 1.0e-9_dp,        n_fail)
   call chk_deg('Moon alt  vs Horizons', moon_alt_deg, 21.518703_dp,         1.0_dp/3600.0_dp, n_fail)
   call chk_deg('Moon az   vs Horizons', moon_az_deg, 157.820214_dp,         1.0_dp/3600.0_dp, n_fail)
   call chk_au ('Moon dist vs Horizons', moon_dist,     0.00252475127904_dp, 1.0e-9_dp,        n_fail)
+  call chk_as ('Sun  diam vs Horizons', sun_ang_diam_as, 1950.991_dp,       1.0_dp,           n_fail)
+  call chk_as ('Moon diam vs Horizons', moon_ang_diam_as, 1897.634_dp,      1.0_dp,           n_fail)
+
+  ! ══════════════════════════════════════════════════════════════════
+  !  Test 2: Fredericksburg TX — 2024 April 8 total solar eclipse
+  !  Local time 13:35:07 CDT (UTC−5) = 18:35:07 UTC
+  !  delta_T = 69.184 s (37 leap seconds + 32.184 s, DUT1 ≈ 0)
+  ! ══════════════════════════════════════════════════════════════════
+  print '(A)', ''
+  print '(A)', '--- Test 2: Fredericksburg TX — 2024-04-08 total solar eclipse ---'
+
+  lat_deg = 30.2752011_dp;  lon_deg = -98.8719843_dp;  elev_m = 556.0_dp
+  utc_year = 2024;  utc_month = 4;  utc_day = 8
+  utc_hour = 18;  utc_minute = 35;  utc_second = 7
+  delta_t  = 69.184_dp
+  leap_sec = 37
+
+  jd_int   = julian_day(utc_year, utc_month, utc_day)
+  jd_whole = real(jd_int, dp)
+  utc_frac = (real(utc_hour,   dp) * 3600.0_dp + &
+              real(utc_minute, dp) * 60.0_dp   + &
+              real(utc_second, dp)) / DAY_S - 0.5_dp
+
+  call utc_to_tt (jd_whole, utc_frac, leap_sec, tt_frac)
+  call tt_to_tdb (jd_whole, tt_frac,             tdb_frac)
+  call tt_to_ut1 (jd_whole, tt_frac, delta_t,   ut1_frac)
+  jd_tt  = jd_whole + tt_frac
+  jd_tdb = jd_whole + tdb_frac
+
+  call compute_M(jd_tt, jd_tdb, M, d_psi, d_eps, mean_ob)
+  gmst_h = greenwich_mean_sidereal_time(jd_whole, ut1_frac, jd_tdb)
+  gast_h = greenwich_apparent_sidereal_time(gmst_h, d_psi, mean_ob, jd_tt)
+  R_itrs = itrs_rotation(gast_h, M)
+
+  call wgs84_to_itrs_au(lat_deg, lon_deg, elev_m, itrs_pos)
+  call itrs_velocity_au_per_day(itrs_pos, itrs_vel)
+  RT           = mat33_T(R_itrs)
+  obs_gcrs     = mat33_vec(RT, itrs_pos)
+  obs_vel_gcrs = mat33_vec(RT, itrs_vel)
+  call earth_position_au(kernel, jd_whole, tdb_frac, earth_pos, earth_vel)
+  obs_bcrs_pos = earth_pos + obs_gcrs
+  obs_bcrs_vel = earth_vel + obs_vel_gcrs
+
+  lat_rad = lat_deg * DEG2RAD
+  lon_rad = lon_deg * DEG2RAD
+  R_altaz = altaz_rotation(lat_rad, lon_rad, R_itrs)
+
+  call correct_light_travel_time(obs_bcrs_pos, obs_bcrs_vel, kernel, &
+       jd_whole, tdb_frac, 1, sun_astro, sun_astro_vel, sun_lt)
+  call add_deflection(sun_astro, obs_bcrs_pos, obs_gcrs, kernel, jd_whole, tdb_frac)
+  call add_aberration(sun_astro, obs_bcrs_vel, sun_lt)
+  sun_altaz       = mat33_vec(R_altaz, sun_astro)
+  call to_spherical(sun_altaz, sun_dist, sun_alt, sun_az)
+  sun_ang_diam_as = 2.0_dp * asin(SOLAR_RADIUS_KM / (sun_dist * AU_KM)) * RAD2DEG * 3600.0_dp
+  sun_alt_deg     = sun_alt * RAD2DEG
+  sun_az_deg      = sun_az  * RAD2DEG
+
+  call correct_light_travel_time(obs_bcrs_pos, obs_bcrs_vel, kernel, &
+       jd_whole, tdb_frac, 2, moon_astro, moon_astro_vel, moon_lt)
+  call add_deflection(moon_astro, obs_bcrs_pos, obs_gcrs, kernel, jd_whole, tdb_frac)
+  call add_aberration(moon_astro, obs_bcrs_vel, moon_lt)
+  moon_altaz       = mat33_vec(R_altaz, moon_astro)
+  call to_spherical(moon_altaz, moon_dist, moon_alt, moon_az)
+  moon_ang_diam_as = 2.0_dp * asin(MOON_RADIUS_KM / (moon_dist * AU_KM)) * RAD2DEG * 3600.0_dp
+  moon_alt_deg     = moon_alt * RAD2DEG
+  moon_az_deg      = moon_az  * RAD2DEG
+
+  ! ── Assertions: Test 2 ─────────────────────────────────────────────
+  print '(A)', '=== Regression checks ==='
+
+  call chk_deg('Sun  alt  regression', sun_alt_deg,  67.315115_dp,         1.0e-6_dp,  n_fail)
+  call chk_deg('Sun  az   regression', sun_az_deg,  178.714820_dp,         1.0e-6_dp,  n_fail)
+  call chk_au ('Sun  dist regression', sun_dist,      1.00147118495962_dp, 1.0e-13_dp, n_fail)
+  call chk_as ('Sun  diam regression', sun_ang_diam_as, 1915.644_dp,       1.0e-3_dp,  n_fail)
+
+  call chk_deg('Moon alt  regression', moon_alt_deg, 67.316105_dp,         1.0e-6_dp,  n_fail)
+  call chk_deg('Moon az   regression', moon_az_deg, 178.718420_dp,         1.0e-6_dp,  n_fail)
+  call chk_au ('Moon dist regression', moon_dist,     0.00236588019913_dp, 1.0e-13_dp, n_fail)
+  call chk_as ('Moon diam regression', moon_ang_diam_as, 2025.063_dp,      1.0e-3_dp,  n_fail)
+
+  ! Angular separation between Sun and Moon centers (eclipse geometry check)
+  ! cos(sep) = sin(alt_s)*sin(alt_m) + cos(alt_s)*cos(alt_m)*cos(az_s - az_m)
+  ! At maximum totality the centers should be within a few arcseconds of each other.
+  sep_as = acos(min(1.0_dp, &
+                    sin(sun_alt) * sin(moon_alt) + &
+                    cos(sun_alt) * cos(moon_alt) * cos(sun_az - moon_az))) &
+           * RAD2DEG * 3600.0_dp
+  print '(A)', ''
+  print '(A)', '=== Eclipse geometry check ==='
+  print '(A,F8.2,A)', '  Sun-Moon angular separation: ', sep_as, '"'
+  print '(A,F8.2,A)', '  Moon angular radius:          ', moon_ang_diam_as / 2.0_dp, '"'
+  print '(A,F8.2,A)', '  Sun  angular radius:          ', sun_ang_diam_as  / 2.0_dp, '"'
+  call chk_as('Sun-Moon sep < 30"  (eclipse overlap)', sep_as, 0.0_dp, 30.0_dp, n_fail)
+
+  call spk_close(kernel)
 
   print '(A)', ''
   if (n_fail == 0) then
