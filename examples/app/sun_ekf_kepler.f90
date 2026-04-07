@@ -1,399 +1,7 @@
-! ═══════════════════════════════════════════════════════════════════════
-! sun_ekf.f90 — 2-body Sun-Earth EKF with N-body propagation
-! ═══════════════════════════════════════════════════════════════════════
-!
-! State vector: x = [e, i, Ω, ω, M₀, μ, a]  (7 elements, all constant)
-!   e    = eccentricity
-!   i    = inclination (≈ obliquity ≈ 23.44° in equatorial J2000)
-!   Ω    = longitude of ascending node
-!   ω    = argument of periapsis
-!   M₀   = mean anomaly at reference epoch
-!   μ    = GM_sun + GM_earth (total gravitational parameter)
-!   a    = semi-major axis (km)
-!
-! Fixed parameters:
-!   R_E  = Earth radius (6378.137 km)
-!
-! Dynamics: F = I (elements are constants of motion in 2-body)
-! Propagation: Yoshida 4th-order N-body integrator (N=2)
-!   Elements → Cartesian at epoch → propagate → alt/az
-! Observations: Sun alt/az from observations.dat
-! Filter: EKF with finite-difference Jacobian
-!
-! ═══════════════════════════════════════════════════════════════════════
-
-! ─── Module 1: Constants ─────────────────────────────────────────────
-module constants_mod
-  implicit none
-  integer, parameter :: dp = selected_real_kind(15)
-  real(dp), parameter :: PI  = 3.14159265358979323846_dp
-  real(dp), parameter :: TAU = 2.0_dp * PI
-  real(dp), parameter :: DEG2RAD  = PI / 180.0_dp
-  real(dp), parameter :: RAD2DEG  = 180.0_dp / PI
-  real(dp), parameter :: ASEC2RAD = PI / (180.0_dp * 3600.0_dp)
-  real(dp), parameter :: T0    = 2451545.0_dp      ! J2000.0
-  real(dp), parameter :: DAY_S = 86400.0_dp
-  real(dp), parameter :: AU_KM = 149597870.7_dp
-  real(dp), parameter :: C_LIGHT_KMS = 299792.458_dp
-  real(dp), parameter :: R_EARTH_KM  = 6378.137_dp
-end module constants_mod
-
-! ─── Module 2: SPK reader (DE440s) ──────────────────────────────────
-module spk_reader_mod
+module kepler_obs_kepler_mod
   use constants_mod
   implicit none
-
-  integer, parameter :: MAX_SEGMENTS = 64
-
-  type :: spk_segment
-    real(dp) :: start_second, end_second
-    integer  :: target, center, frame, data_type
-    integer  :: start_i, end_i
-    real(dp) :: start_jd, end_jd
-    logical  :: loaded = .false.
-    real(dp) :: init_epoch, intlen
-    integer  :: n_intervals, coefficient_count, component_count
-    real(dp), allocatable :: coeffs(:,:,:)
-  end type
-
-  type :: spk_kernel
-    integer :: unit_num = -1
-    integer :: n_segments = 0
-    type(spk_segment) :: segments(MAX_SEGMENTS)
-  end type
-
-contains
-
-  subroutine spk_open(filename, kernel)
-    character(len=*), intent(in) :: filename
-    type(spk_kernel), intent(out) :: kernel
-    integer :: u, fward, nd, ni
-    character(8) :: locidw
-    open(newunit=u, file=filename, access='stream', form='unformatted', &
-         status='old', action='read')
-    kernel%unit_num = u
-    read(u) locidw
-    read(u) nd
-    read(u) ni
-    read(u, pos=77) fward
-    call parse_summaries(u, fward, nd, ni, kernel)
-  end subroutine
-
-  subroutine parse_summaries(u, fward, nd, ni, kernel)
-    integer, intent(in) :: u, fward, nd, ni
-    type(spk_kernel), intent(inout) :: kernel
-    integer :: record_number, n_summaries, i, seg_idx
-    real(dp) :: next_rec, prev_rec, nsumm_d
-    real(dp) :: start_sec, end_sec
-    integer :: tgt, ctr, frm, dtype, si, ei
-    integer :: base_pos, summary_size, step, ctrl_size
-
-    summary_size = nd * 8 + ni * 4
-    step = summary_size
-    if (mod(step, 8) /= 0) step = step + (8 - mod(step, 8))
-    ctrl_size = 24
-    record_number = fward
-    seg_idx = 0
-
-    do while (record_number /= 0)
-      base_pos = (record_number - 1) * 1024 + 1
-      read(u, pos=base_pos) next_rec, prev_rec, nsumm_d
-      n_summaries = int(nsumm_d)
-      do i = 0, n_summaries - 1
-        seg_idx = seg_idx + 1
-        if (seg_idx > MAX_SEGMENTS) stop 'Too many segments'
-        read(u, pos=base_pos + ctrl_size + i * step) start_sec, end_sec, &
-             tgt, ctr, frm, dtype, si, ei
-        kernel%segments(seg_idx)%start_second = start_sec
-        kernel%segments(seg_idx)%end_second   = end_sec
-        kernel%segments(seg_idx)%target       = tgt
-        kernel%segments(seg_idx)%center       = ctr
-        kernel%segments(seg_idx)%frame        = frm
-        kernel%segments(seg_idx)%data_type    = dtype
-        kernel%segments(seg_idx)%start_i      = si
-        kernel%segments(seg_idx)%end_i        = ei
-        kernel%segments(seg_idx)%start_jd     = T0 + start_sec / DAY_S
-        kernel%segments(seg_idx)%end_jd       = T0 + end_sec / DAY_S
-      end do
-      record_number = int(next_rec)
-    end do
-    kernel%n_segments = seg_idx
-  end subroutine
-
-  function find_segment(kernel, center, target) result(idx)
-    type(spk_kernel), intent(in) :: kernel
-    integer, intent(in) :: center, target
-    integer :: idx, i
-    idx = -1
-    do i = kernel%n_segments, 1, -1
-      if (kernel%segments(i)%center == center .and. &
-          kernel%segments(i)%target == target) then
-        idx = i; return
-      end if
-    end do
-  end function
-
-  subroutine load_segment_data(kernel, idx)
-    type(spk_kernel), intent(inout) :: kernel
-    integer, intent(in) :: idx
-    type(spk_segment) :: seg
-    real(dp) :: meta(4)
-    integer :: rsize_i, n_i, coeff_count, comp_count
-    integer :: u, pos, total_words
-    real(dp), allocatable :: raw(:)
-    integer :: rec, c, k, kk
-
-    seg = kernel%segments(idx)
-    u = kernel%unit_num
-    if (seg%loaded) return
-
-    pos = (seg%end_i - 4) * 8 + 1
-    read(u, pos=pos) meta
-    kernel%segments(idx)%init_epoch = meta(1)
-    kernel%segments(idx)%intlen     = meta(2)
-    rsize_i = int(meta(3))
-    n_i     = int(meta(4))
-    kernel%segments(idx)%n_intervals = n_i
-
-    if (seg%data_type == 2) then; comp_count = 3; else; comp_count = 6; end if
-    coeff_count = (rsize_i - 2) / comp_count
-    kernel%segments(idx)%coefficient_count = coeff_count
-    kernel%segments(idx)%component_count   = comp_count
-
-    total_words = rsize_i * n_i
-    allocate(raw(total_words))
-    pos = (seg%start_i - 1) * 8 + 1
-    read(u, pos=pos) raw
-
-    allocate(kernel%segments(idx)%coeffs(coeff_count, comp_count, n_i))
-    do rec = 1, n_i
-      do c = 1, comp_count
-        do k = 1, coeff_count
-          kk = coeff_count - k + 1
-          kernel%segments(idx)%coeffs(kk, c, rec) = &
-              raw((rec-1)*rsize_i + 2 + (c-1)*coeff_count + k)
-        end do
-      end do
-    end do
-    deallocate(raw)
-    kernel%segments(idx)%loaded = .true.
-  end subroutine
-
-  subroutine spk_compute_and_diff(kernel, center, target, tdb_whole, tdb_frac, pos, vel)
-    type(spk_kernel), intent(inout) :: kernel
-    integer, intent(in) :: center, target
-    real(dp), intent(in) :: tdb_whole, tdb_frac
-    real(dp), intent(out) :: pos(3), vel(3)
-    integer :: idx, n_int, cc
-    real(dp) :: init_e, intlen
-    real(dp) :: index1, offset1, index2, offset2, index3, offset_s
-    integer :: interval
-    real(dp) :: s, s2, w0(3), w1(3), w2(3)
-    real(dp) :: dw0(3), dw1(3), dw2(3), wlist(100,3)
-    integer :: k
-
-    idx = find_segment(kernel, center, target)
-    if (idx < 0) then
-      print *, 'ERROR: segment not found center=', center, ' target=', target
-      stop 1
-    end if
-    if (.not. kernel%segments(idx)%loaded) call load_segment_data(kernel, idx)
-
-    init_e = kernel%segments(idx)%init_epoch
-    intlen = kernel%segments(idx)%intlen
-    n_int  = kernel%segments(idx)%n_intervals
-    cc     = kernel%segments(idx)%coefficient_count
-
-    call divmod_dp((tdb_whole - T0) * DAY_S - init_e, intlen, index1, offset1)
-    call divmod_dp(tdb_frac * DAY_S, intlen, index2, offset2)
-    call divmod_dp(offset1 + offset2, intlen, index3, offset_s)
-    interval = int(index1 + index2 + index3)
-    if (interval == n_int) then; interval = interval - 1; offset_s = offset_s + intlen; end if
-    interval = interval + 1
-
-    s = 2.0_dp * offset_s / intlen - 1.0_dp
-    s2 = 2.0_dp * s
-
-    w0 = 0.0_dp; w1 = 0.0_dp
-    do k = 1, cc - 1
-      w2 = w1; w1 = w0
-      w0(1) = kernel%segments(idx)%coeffs(k,1,interval) + s2*w1(1) - w2(1)
-      w0(2) = kernel%segments(idx)%coeffs(k,2,interval) + s2*w1(2) - w2(2)
-      w0(3) = kernel%segments(idx)%coeffs(k,3,interval) + s2*w1(3) - w2(3)
-      wlist(k,:) = w1
-    end do
-    pos(1) = kernel%segments(idx)%coeffs(cc,1,interval) + s*w0(1) - w1(1)
-    pos(2) = kernel%segments(idx)%coeffs(cc,2,interval) + s*w0(2) - w1(2)
-    pos(3) = kernel%segments(idx)%coeffs(cc,3,interval) + s*w0(3) - w1(3)
-
-    dw0 = 0.0_dp; dw1 = 0.0_dp
-    do k = 1, cc - 1
-      dw2 = dw1; dw1 = dw0
-      dw0(1) = 2.0_dp*wlist(k,1) + dw1(1)*s2 - dw2(1)
-      dw0(2) = 2.0_dp*wlist(k,2) + dw1(2)*s2 - dw2(2)
-      dw0(3) = 2.0_dp*wlist(k,3) + dw1(3)*s2 - dw2(3)
-    end do
-    vel(1) = w0(1) + s*dw0(1) - dw1(1)
-    vel(2) = w0(2) + s*dw0(2) - dw1(2)
-    vel(3) = w0(3) + s*dw0(3) - dw1(3)
-    vel = vel / intlen * 2.0_dp * DAY_S
-  end subroutine
-
-  subroutine divmod_dp(a, b, q, r)
-    real(dp), intent(in)  :: a, b
-    real(dp), intent(out) :: q, r
-    q = floor(a / b)
-    r = a - q * b
-  end subroutine
-
-  subroutine spk_close(kernel)
-    type(spk_kernel), intent(inout) :: kernel
-    if (kernel%unit_num /= -1) close(kernel%unit_num)
-    kernel%unit_num = -1
-  end subroutine
-end module spk_reader_mod
-
-! ─── Module 3: Observation reader ────────────────────────────────────
-module obs_reader_mod
-  use constants_mod
-  implicit none
-
-  integer, parameter :: MAX_OBS = 10000
-
-  type :: observation
-    real(dp) :: jd
-    integer  :: body       ! 1=Sun, 2=Moon
-    integer  :: event      ! 1=R, 2=S, 3=I
-    real(dp) :: alt_obs    ! degrees
-    real(dp) :: az_obs     ! degrees
-    real(dp) :: alt_true   ! degrees
-    real(dp) :: az_true    ! degrees
-    real(dp) :: dist       ! AU
-  end type
-
-contains
-
-  subroutine read_observations(filename, obs, n_obs, jd_max)
-    character(len=*), intent(in)  :: filename
-    type(observation), intent(out) :: obs(MAX_OBS)
-    integer, intent(out) :: n_obs
-    real(dp), intent(in) :: jd_max
-
-    integer :: u, ios
-    character(len=512) :: line
-    character(1) :: body_c, event_c
-    real(dp) :: jd, alt_o, az_o, alt_t, az_t, dist
-    integer :: bi, ei
-
-    open(newunit=u, file=filename, status='old', action='read')
-    n_obs = 0
-    do
-      read(u, '(A)', iostat=ios) line
-      if (ios /= 0) exit
-      if (line(1:1) == '#') cycle
-      read(line, *, iostat=ios) jd, body_c, event_c, alt_o, az_o, alt_t, az_t, dist
-      if (ios /= 0) cycle
-      if (jd > jd_max) cycle
-      if (body_c == 'S') then; bi = 1; else; bi = 2; end if
-      if (event_c == 'R') then; ei = 1
-      else if (event_c == 'S') then; ei = 2
-      else; ei = 3; end if
-      n_obs = n_obs + 1
-      if (n_obs > MAX_OBS) then
-        n_obs = MAX_OBS; exit
-      end if
-      obs(n_obs)%jd       = jd
-      obs(n_obs)%body     = bi
-      obs(n_obs)%event    = ei
-      obs(n_obs)%alt_obs  = alt_o
-      obs(n_obs)%az_obs   = az_o
-      obs(n_obs)%alt_true = alt_t
-      obs(n_obs)%az_true  = az_t
-      obs(n_obs)%dist     = dist
-    end do
-    close(u)
-  end subroutine
-
-end module obs_reader_mod
-
-! ─── Module 4: N-body dynamics (Yoshida 4th-order) ──────────────────
-module nbody2_mod
-  use constants_mod
-  implicit none
-  integer, parameter :: NB = 2   ! Sun, Earth
-
-  ! Yoshida 4th-order symplectic coefficients
-  real(dp), parameter :: W0_Y = -(2.0_dp ** (1.0_dp/3.0_dp)) / &
-      (2.0_dp - 2.0_dp ** (1.0_dp/3.0_dp))
-  real(dp), parameter :: W1_Y = 1.0_dp / (2.0_dp - 2.0_dp ** (1.0_dp/3.0_dp))
-  real(dp), parameter :: C1_Y = 0.5_dp * W1_Y
-  real(dp), parameter :: C4_Y = C1_Y
-  real(dp), parameter :: C2_Y = 0.5_dp * (W0_Y + W1_Y)
-  real(dp), parameter :: C3_Y = C2_Y
-  real(dp), parameter :: D1_Y = W1_Y
-  real(dp), parameter :: D2_Y = W0_Y
-  real(dp), parameter :: D3_Y = W1_Y
-
-contains
-
-  subroutine compute_acc_nb(pos, gm, acc)
-    real(dp), intent(in)  :: pos(NB,3), gm(NB)
-    real(dp), intent(out) :: acc(NB,3)
-    real(dp) :: r(3), r2, rinv3
-
-    acc = 0.0_dp
-    r = pos(2,:) - pos(1,:)
-    r2 = dot_product(r, r)
-    rinv3 = 1.0_dp / (r2 * sqrt(r2))
-    acc(1,:) =  gm(2) * r * rinv3
-    acc(2,:) = -gm(1) * r * rinv3
-  end subroutine
-
-  subroutine yoshida4_step_nb(pos, vel, gm, dt)
-    real(dp), intent(inout) :: pos(NB,3), vel(NB,3)
-    real(dp), intent(in)    :: gm(NB), dt
-    real(dp) :: acc(NB,3)
-
-    pos = pos + C1_Y * dt * vel
-    call compute_acc_nb(pos, gm, acc)
-    vel = vel + D1_Y * dt * acc
-
-    pos = pos + C2_Y * dt * vel
-    call compute_acc_nb(pos, gm, acc)
-    vel = vel + D2_Y * dt * acc
-
-    pos = pos + C3_Y * dt * vel
-    call compute_acc_nb(pos, gm, acc)
-    vel = vel + D3_Y * dt * acc
-
-    pos = pos + C4_Y * dt * vel
-  end subroutine
-
-  subroutine propagate_nbody(pos, vel, gm, dt_total)
-    real(dp), intent(inout) :: pos(NB,3), vel(NB,3)
-    real(dp), intent(in)    :: gm(NB), dt_total
-    real(dp) :: dt_step
-    integer :: n_steps, i
-
-    ! 3-hour max sub-steps for stability
-    dt_step = sign(min(abs(dt_total), 10800.0_dp), dt_total)
-    n_steps = max(1, nint(abs(dt_total) / abs(dt_step)))
-    dt_step = dt_total / real(n_steps, dp)
-
-    do i = 1, n_steps
-      call yoshida4_step_nb(pos, vel, gm, dt_step)
-    end do
-  end subroutine
-
-end module nbody2_mod
-
-! ─── Module 5: Keplerian elements + observation model ────────────────
-module kepler_obs_mod
-  use constants_mod
-  use nbody2_mod, only: NB, propagate_nbody
-  implicit none
-  integer, parameter :: NS = 7   ! EKF state dimension
-  real(dp), parameter :: GM_EARTH_KNOWN = 398600.435507_dp  ! fixed split
+  integer, parameter :: NS = 6   ! EKF state dimension
 
 contains
 
@@ -681,15 +289,14 @@ contains
   end function
 
   ! ── Predict Sun alt/az from EKF state ──
-  subroutine predict_sun_altaz(x, t_epoch, jd_obs, lat_deg, lon_deg, &
+  subroutine predict_sun_altaz(x, a_fixed, t_epoch, jd_obs, lat_deg, lon_deg, &
                                 alt_deg, az_deg)
-    real(dp), intent(in)  :: x(NS), t_epoch, jd_obs, lat_deg, lon_deg
+    real(dp), intent(in)  :: x(NS), a_fixed, t_epoch, jd_obs, lat_deg, lon_deg
     real(dp), intent(out) :: alt_deg, az_deg
 
-    real(dp) :: ecc, inc, raan_v, argp_v, M0, mu, a_val
-    real(dp) :: dt_s
-    real(dp) :: r_rel(3), v_rel(3), r_sun(3), v_earth(3)
-    real(dp) :: pos_nb(NB,3), vel_nb(NB,3), gm_nb(NB), gm_s
+    real(dp) :: ecc, inc, raan_v, argp_v, M0, mu
+    real(dp) :: n_mean, M_now, dt_s
+    real(dp) :: r_eq(3), v_eq(3), r_sun(3)
     real(dp) :: d_gcrs(3), d_date(3), d_itrs(3), d_local(3)
     real(dp) :: obs_itrs(3), obs_date(3), obs_gcrs(3)
     real(dp) :: lat, lon, sinlat, coslat, slon, clon
@@ -702,27 +309,18 @@ contains
 
     ! Unpack state
     ecc = x(1); inc = x(2); raan_v = x(3)
-    argp_v = x(4); M0 = x(5); mu = x(6); a_val = x(7)
+    argp_v = x(4); M0 = x(5); mu = x(6)
 
-    ! Convert elements at epoch to Cartesian (Earth relative to Sun)
-    call kepler_to_cart(a_val, ecc, inc, raan_v, argp_v, M0, mu, r_rel, v_rel)
-
-    ! Set up N-body initial conditions (barycentric frame)
-    gm_s = mu - GM_EARTH_KNOWN
-    pos_nb(1,:) = -(GM_EARTH_KNOWN / mu) * r_rel   ! Sun
-    vel_nb(1,:) = -(GM_EARTH_KNOWN / mu) * v_rel
-    pos_nb(2,:) =  (gm_s / mu) * r_rel              ! Earth
-    vel_nb(2,:) =  (gm_s / mu) * v_rel
-    gm_nb(1) = gm_s
-    gm_nb(2) = GM_EARTH_KNOWN
-
-    ! Propagate from epoch to observation time
+    ! Mean motion and mean anomaly at observation time
+    n_mean = sqrt(mu / a_fixed**3)
     dt_s = (jd_obs - t_epoch) * DAY_S
-    call propagate_nbody(pos_nb, vel_nb, gm_nb, dt_s)
+    M_now = M0 + n_mean * dt_s
 
-    ! Sun geocentric position and Earth velocity
-    r_sun   = pos_nb(1,:) - pos_nb(2,:)
-    v_earth = vel_nb(2,:)
+    ! Keplerian → Cartesian (Earth relative to Sun, J2000)
+    call kepler_to_cart(a_fixed, ecc, inc, raan_v, argp_v, M_now, mu, r_eq, v_eq)
+
+    ! Sun geocentric position = -(Earth relative to Sun)
+    r_sun = -r_eq
 
     ! --- Coordinate transformations (same as kalman_sim.f90) ---
     lat = lat_deg * DEG2RAD
@@ -757,7 +355,7 @@ contains
     d_gcrs = r_sun - obs_gcrs
 
     ! Aberration (first-order): Earth velocity / c
-    v_obs = v_earth / C_LIGHT_KMS
+    v_obs = v_eq / C_LIGHT_KMS
     dnorm = sqrt(sum(d_gcrs**2))
     if (dnorm > 1.0d-10) then
       d_unit = d_gcrs / dnorm
@@ -794,16 +392,16 @@ contains
     if (az_deg < 0.0_dp) az_deg = az_deg + 360.0_dp
   end subroutine
 
-end module kepler_obs_mod
+end module kepler_obs_kepler_mod
 
 ! ═══════════════════════════════════════════════════════════════════════
 !  Main program
 ! ═══════════════════════════════════════════════════════════════════════
-program sun_ekf
+program sun_ekf_kepler
   use constants_mod
   use spk_reader_mod
   use obs_reader_mod
-  use kepler_obs_mod
+  use kepler_obs_kepler_mod
   implicit none
 
   ! GM values (DE440)
@@ -812,7 +410,7 @@ program sun_ekf
 
   ! State vectors
   real(dp) :: x(NS), x_true(NS), x_init(NS)
-  real(dp) :: t_epoch
+  real(dp) :: a_fixed, t_epoch
 
   ! EKF covariance
   real(dp) :: P_cov(NS,NS), P_pred(NS,NS)
@@ -855,30 +453,15 @@ program sun_ekf
   real(dp) :: rms_alt, rms_az, win_alt, win_az
   integer :: n_proc
   real(dp) :: err_omega_deg
-  real(dp) :: corr_mat(NS,NS), sig_i, sig_j
-  character(len=7) :: param_names(NS)
 
   ! ═══════════════════════════════════════════════════
   lat_obs = 40.0_dp
   lon_obs = 0.0_dp
 
   print '(A)', '════════════════════════════════════════════════════════'
-  print '(A)', '  2-Body Sun-Earth EKF (N-body propagation)'
+  print '(A)', '  2-Body Sun-Earth EKF with Keplerian Elements'
   print '(A,F8.4,A,F8.4)', '  Observer: lat=', lat_obs, ' lon=', lon_obs
   print '(A)', '════════════════════════════════════════════════════════'
-  print '(A)', ''
-  print '(A)', '  State vector: x = [e, i, Omega, omega, M0, mu, a]'
-  print '(A)', '    e     = eccentricity (0 = circle, 1 = parabola)'
-  print '(A)', '    i     = inclination of orbit to equator (deg)'
-  print '(A)', '            (should recover obliquity ~23.44 deg)'
-  print '(A)', '    Omega = longitude of ascending node (deg)'
-  print '(A)', '            (where orbit crosses equator going north)'
-  print '(A)', '    omega = argument of periapsis (deg)'
-  print '(A)', '            (angle from ascending node to closest approach)'
-  print '(A)', '    M0    = mean anomaly at epoch (deg)'
-  print '(A)', '            (linearized orbital phase at reference time)'
-  print '(A)', '    mu    = gravitational parameter GM_sun + GM_earth (km^3/s^2)'
-  print '(A)', '    a     = semi-major axis of orbit (km)'
 
   ! ── 1. Read all observations, extract Sun-only ──
   call read_observations('observations.dat', obs_all, n_obs_all, 1.0d10)
@@ -926,6 +509,8 @@ program sun_ekf
   r_diff = sqrt(sum((r_check - r_rel)**2))
   print '(A,ES10.3,A)', '  Round-trip error: ', r_diff, ' km'
 
+  a_fixed = a_comp
+
   ! True state vector
   x_true(1) = ecc_comp
   x_true(2) = inc_comp
@@ -933,7 +518,6 @@ program sun_ekf
   x_true(4) = argp_comp
   x_true(5) = M0_comp
   x_true(6) = mu_total
-  x_true(7) = a_comp
 
   print '(/,A)',          '  True Keplerian elements (J2000 equatorial):'
   print '(A,F12.8)',      '    e     = ', x_true(1)
@@ -942,7 +526,7 @@ program sun_ekf
   print '(A,F10.5,A)',    '    omega = ', x_true(4) * RAD2DEG, ' deg'
   print '(A,F10.5,A)',    '    M0    = ', x_true(5) * RAD2DEG, ' deg'
   print '(A,ES20.12,A)',  '    mu    = ', x_true(6), ' km^3/s^2'
-  print '(A,F12.1,A)',    '    a     = ', x_true(7), ' km'
+  print '(A,F12.1,A)',    '    a     = ', a_fixed, ' km (fixed)'
 
   ! ── 3. Perturb initial state ──
   x_init(1) = x_true(1) * 1.20_dp            ! e: +20%
@@ -951,7 +535,6 @@ program sun_ekf
   x_init(4) = x_true(4) + 5.0_dp * DEG2RAD   ! omega: +5 deg
   x_init(5) = x_true(5) + 3.0_dp * DEG2RAD   ! M0: +3 deg
   x_init(6) = x_true(6) * 1.005_dp           ! mu: +0.5%
-  x_init(7) = x_true(7)                      ! a: correct value
 
   print '(/,A)', '  Perturbed initial guess:'
   print '(A,F12.8,A,F6.1,A)',  '    e     = ', x_init(1), &
@@ -966,12 +549,10 @@ program sun_ekf
        ' deg  (delta ', (x_init(5)-x_true(5))*RAD2DEG, ' deg)'
   print '(A,ES20.12,A,F6.3,A)', '    mu    = ', x_init(6), &
        '  (', (x_init(6)/x_true(6)-1.0_dp)*100.0_dp, '%)'
-  print '(A,F12.1,A)',          '    a     = ', x_init(7), ' km (correct)'
 
   ! ── 4. Initialize EKF ──
   x = x_init
 
-  ! Initial covariance (1-sigma uncertainties on diagonal)
   P_cov = 0.0_dp
   P_cov(1,1) = (0.005_dp)**2             ! sigma_e = 0.005
   P_cov(2,2) = (3.0_dp * DEG2RAD)**2     ! sigma_i = 3 deg
@@ -979,18 +560,6 @@ program sun_ekf
   P_cov(4,4) = (8.0_dp * DEG2RAD)**2     ! sigma_omega = 8 deg
   P_cov(5,5) = (5.0_dp * DEG2RAD)**2     ! sigma_M0 = 5 deg
   P_cov(6,6) = (0.01_dp * mu_total)**2   ! sigma_mu = 1%
-  P_cov(7,7) = (0.01_dp * a_comp)**2     ! sigma_a = 1% (~1.5M km)
-
-  print '(/,A)', '  Initial 1-sigma uncertainties:'
-  print '(A,F10.6)',     '    sigma_e     = ', sqrt(P_cov(1,1))
-  print '(A,F8.4,A)',    '    sigma_i     = ', sqrt(P_cov(2,2))*RAD2DEG, ' deg'
-  print '(A,F8.4,A)',    '    sigma_Omega = ', sqrt(P_cov(3,3))*RAD2DEG, ' deg'
-  print '(A,F8.4,A)',    '    sigma_omega = ', sqrt(P_cov(4,4))*RAD2DEG, ' deg'
-  print '(A,F8.4,A)',    '    sigma_M0    = ', sqrt(P_cov(5,5))*RAD2DEG, ' deg'
-  print '(A,ES10.3,A,F6.3,A)', '    sigma_mu    = ', sqrt(P_cov(6,6)), &
-       '  (', sqrt(P_cov(6,6))/mu_total*100.0_dp, '%)'
-  print '(A,ES10.3,A,F6.3,A)', '    sigma_a     = ', sqrt(P_cov(7,7)), &
-       '  (', sqrt(P_cov(7,7))/a_comp*100.0_dp, '%)'
 
   Q_noise = 0.0_dp   ! elements are constant in 2-body
 
@@ -999,9 +568,6 @@ program sun_ekf
   R_noise(1,1) = sigma_obs**2
   R_noise(2,2) = sigma_obs**2
 
-  print '(A,F6.1,A)',    '    sigma_obs   = ', sigma_obs * 3600.0_dp, &
-       ' arcsec (measurement noise, alt & az)'
-
   ! FD perturbation sizes
   delta(1) = 1.0d-7             ! e
   delta(2) = 1.0d-7             ! i (rad)
@@ -1009,7 +575,6 @@ program sun_ekf
   delta(4) = 1.0d-7             ! omega (rad)
   delta(5) = 1.0d-7             ! M0 (rad)
   delta(6) = mu_total * 1.0d-7  ! mu
-  delta(7) = a_comp * 1.0d-7    ! a
 
   I_mat = 0.0_dp
   do i = 1, NS
@@ -1018,19 +583,8 @@ program sun_ekf
 
   ! ── 5. EKF loop ──
   print '(/,A)', '  Running EKF...'
-  print '(A)', ''
-  print '(A)', '  Column definitions:'
-  print '(A)', '    Obs#     = observation number (cumulative)'
-  print '(A)', '    cumRMSa" = cumulative RMS of altitude residuals (arcsec)'
-  print '(A)', '    cumRMSz" = cumulative RMS of azimuth residuals (arcsec)'
-  print '(A)', '    winRMSa" = windowed RMS of altitude residuals, last 200 obs (arcsec)'
-  print '(A)', '    winRMSz" = windowed RMS of azimuth residuals, last 200 obs (arcsec)'
-  print '(A)', '    e_err%   = relative error in eccentricity vs true (%)'
-  print '(A)', '    i_err(d) = error in inclination vs true (degrees)'
-  print '(A)', '    mu_err%  = relative error in mu vs true (%)'
-  print '(A)', '    a_err%   = relative error in semi-major axis vs true (%)'
   print '(A)', '  ──────────────────────────────────────────────────────────────────────────'
-  print '(A)', '   Obs#  cumRMSa" cumRMSz"  winRMSa"  winRMSz"  e_err%   i_err(d) mu_err%  a_err%'
+  print '(A)', '   Obs#  cumRMSa" cumRMSz"  winRMSa"  winRMSz"  e_err%   i_err(d) mu_err%'
 
   rms_alt = 0.0_dp
   rms_az  = 0.0_dp
@@ -1043,7 +597,7 @@ program sun_ekf
     P_pred = P_cov + Q_noise
 
     ! ── Predicted observation ──
-    call predict_sun_altaz(x, t_epoch, s_jd(k), lat_obs, lon_obs, &
+    call predict_sun_altaz(x, a_fixed, t_epoch, s_jd(k), lat_obs, lon_obs, &
                             alt_pred, az_pred)
     z_obs(1)  = s_alt(k)
     z_obs(2)  = s_az(k)
@@ -1060,7 +614,7 @@ program sun_ekf
     do j = 1, NS
       x_pert = x
       x_pert(j) = x_pert(j) + delta(j)
-      call predict_sun_altaz(x_pert, t_epoch, s_jd(k), &
+      call predict_sun_altaz(x_pert, a_fixed, t_epoch, s_jd(k), &
                               lat_obs, lon_obs, alt_p, az_p)
       H(1,j) = (alt_p - alt_pred) / delta(j)
       H(2,j) = (az_p  - az_pred)  / delta(j)
@@ -1095,7 +649,6 @@ program sun_ekf
     x(5) = mod(x(5), TAU); if (x(5) < 0.0_dp) x(5) = x(5) + TAU
     if (x(1) < 1.0d-8) x(1) = 1.0d-8   ! e > 0
     if (x(6) < 0.0_dp) x(6) = mu_total * 0.9_dp
-    if (x(7) < 0.0_dp) x(7) = a_comp * 0.9_dp
 
     ! ── Covariance update: P = (I - K H) P_pred ──
     KH = matmul(K_gain, H)
@@ -1114,7 +667,7 @@ program sun_ekf
     if (mod(n_proc, 200) == 0 .or. n_proc == 1 .or. n_proc == n_sun) then
       j = min(n_proc, 200)
       if (n_proc == 1) j = 1
-      print '(I7,2F10.1,2F10.1,F9.4,F10.5,F8.3,F8.3)', &
+      print '(I7,2F10.1,2F10.1,F9.4,F10.5,F8.3)', &
            n_proc, &
            sqrt(rms_alt / n_proc) * 3600.0_dp, &
            sqrt(rms_az  / n_proc) * 3600.0_dp, &
@@ -1122,8 +675,7 @@ program sun_ekf
            sqrt(win_az  / j) * 3600.0_dp, &
            (x(1)/x_true(1) - 1.0_dp) * 100.0_dp, &
            (x(2) - x_true(2)) * RAD2DEG, &
-           (x(6)/x_true(6) - 1.0_dp) * 100.0_dp, &
-           (x(7)/x_true(7) - 1.0_dp) * 100.0_dp
+           (x(6)/x_true(6) - 1.0_dp) * 100.0_dp
       win_alt = 0.0_dp; win_az = 0.0_dp
     end if
   end do
@@ -1156,17 +708,14 @@ program sun_ekf
   print '(A,ES20.12)', '  mu      ', x(6)
   print '(A,ES20.12,A,F8.4,A)', '  mu_true ', x_true(6), &
        '  err: ', (x(6)/x_true(6)-1.0_dp)*100.0_dp, '%'
-  print '(A,F12.1,A,F12.1,A,F8.4,A)', &
-       '  a       ', x(7), ' km  true: ', x_true(7), ' km  err: ', &
-       (x(7)/x_true(7)-1.0_dp)*100.0_dp, '%'
 
   print '(/,A)', '  Derived quantities:'
   print '(A,F10.5,A,F10.5,A)', '    Obliquity  = ', x(2)*RAD2DEG, &
        ' deg  (true: ', x_true(2)*RAD2DEG, ' deg)'
   print '(A,F12.3,A)', '    Period     = ', &
-       TAU / sqrt(x(6) / x(7)**3) / DAY_S, ' days'
+       TAU / sqrt(x(6) / a_fixed**3) / DAY_S, ' days'
   print '(A,F12.3,A)', '    (true)     = ', &
-       TAU / sqrt(x_true(6) / x_true(7)**3) / DAY_S, ' days'
+       TAU / sqrt(x_true(6) / a_fixed**3) / DAY_S, ' days'
 
   print '(/,A)', '  1-sigma uncertainties (from covariance):'
   print '(A,ES10.3)',      '    sigma_e     = ', sqrt(max(0.0_dp, P_cov(1,1)))
@@ -1181,35 +730,6 @@ program sun_ekf
   print '(A,ES10.3,A,F8.5,A)', '    sigma_mu    = ', &
        sqrt(max(0.0_dp, P_cov(6,6))), &
        '  (', sqrt(max(0.0_dp, P_cov(6,6)))/x(6)*100.0_dp, '%)'
-  print '(A,ES10.3,A,F8.5,A)', '    sigma_a     = ', &
-       sqrt(max(0.0_dp, P_cov(7,7))), &
-       '  (', sqrt(max(0.0_dp, P_cov(7,7)))/x(7)*100.0_dp, '%)'
-
-  ! Correlation matrix
-  param_names(1) = '  e    '
-  param_names(2) = '  i    '
-  param_names(3) = '  Omega'
-  param_names(4) = '  omega'
-  param_names(5) = '  M0   '
-  param_names(6) = '  mu   '
-  param_names(7) = '  a    '
-  do i = 1, NS
-    sig_i = sqrt(max(0.0_dp, P_cov(i,i)))
-    do j = 1, NS
-      sig_j = sqrt(max(0.0_dp, P_cov(j,j)))
-      if (sig_i > 0.0_dp .and. sig_j > 0.0_dp) then
-        corr_mat(i,j) = P_cov(i,j) / (sig_i * sig_j)
-      else
-        corr_mat(i,j) = 0.0_dp
-      end if
-    end do
-  end do
-
-  print '(/,A)', '  Correlation matrix:'
-  print '(A,7(A7,1X))', '          ', (param_names(j), j=1,NS)
-  do i = 1, NS
-    print '(A,7F8.4)', param_names(i), (corr_mat(i,j), j=1,NS)
-  end do
 
   print '(/,A)', '  Note: "True" elements are osculating at epoch. The EKF'
   print '(A)',   '  estimates best-fit MEAN elements over the full arc.'
@@ -1217,4 +737,4 @@ program sun_ekf
   print '(A)',   '  make the osculating e vary over the year.'
   print '(A)', '════════════════════════════════════════════════════════'
 
-end program sun_ekf
+end program sun_ekf_kepler

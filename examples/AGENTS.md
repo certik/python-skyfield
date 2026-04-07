@@ -16,10 +16,30 @@ trajectory processing.
 | `artemis_orion.dat` | Text conversion of above for Fortran |
 | `artemis_trajectory.dat` | Fortran-computed trajectory output |
 
-## Compilers
+## Building with fpm
 
-- `lfortran` — `artemis_trajectory.f90`, `compute_from_scratch.f90`
-- `flang` — all other Fortran programs (also works for `artemis_trajectory.f90` and `compute_from_scratch.f90`)
+```bash
+cd examples/
+fpm build --compiler flang        # build all 9 programs
+fpm run --compiler flang <name>   # run a specific program
+```
+
+Available program names: `compute_from_scratch`, `generate_observations`,
+`sun_ekf_kepler`, `sun_ekf`, `moon_ekf`, `sun_ekf_3body`,
+`kalman_sim`, `newton_sim`, `artemis_trajectory`.
+
+## Project layout
+
+```
+src/   — shared library modules (constants, SPK reader, linalg, nutation,
+          astro, obs_reader, nbody2)
+app/   — one .f90 per executable
+```
+
+## Manual compilation (without fpm)
+
+- `lfortran` — primary compiler for `artemis_trajectory.f90` and `compute_from_scratch.f90`
+- `flang` — used for all other programs
 
 ---
 
@@ -42,14 +62,9 @@ distance) entirely from scratch, implementing:
 
 Results must agree with the Python version to machine precision (~10⁻¹¹°).
 
-**Compile:**
+**Build and run:**
 ```bash
-lfortran compute_from_scratch.f90 -o compute_from_scratch
-```
-
-**Run:**
-```bash
-./compute_from_scratch
+fpm run --compiler flang compute_from_scratch
 ```
 
 **Inputs:** `de440s.bsp`, `nutation.dat`  
@@ -68,14 +83,9 @@ For each day in the configured time span:
 - Observes at rise, set, and every ~2 hours while above the horizon
 - Adds systematic bias + random Gaussian noise (< 1 arcmin mean)
 
-**Compile:**
+**Build and run:**
 ```bash
-flang generate_observations.f90 -o generate_observations
-```
-
-**Run:**
-```bash
-./generate_observations
+fpm run --compiler flang generate_observations
 ```
 
 **Inputs:** `de440s.bsp`, `nutation.dat` (observer lat/lon hardcoded in source)  
@@ -95,14 +105,9 @@ All elements are constants of motion in 2-body; dynamics matrix F = I.
 **Filter:** EKF with finite-difference Jacobian  
 **Propagation:** Yoshida 4th-order N-body integrator
 
-**Compile:**
+**Build and run:**
 ```bash
-flang sun_ekf_kepler.f90 -o sun_ekf_kepler
-```
-
-**Run:**
-```bash
-./sun_ekf_kepler
+fpm run --compiler flang sun_ekf_kepler
 ```
 
 **Inputs:** `observations.dat`, `de440s.bsp`  
@@ -121,14 +126,9 @@ derive the Earth–Sun distance from Sun alt/az observations alone.
 Note: for the distant Sun, diurnal parallax is negligible, so the μ–a
 degeneracy may not be fully broken by angular observations alone.
 
-**Compile:**
+**Build and run:**
 ```bash
-flang sun_ekf.f90 -o sun_ekf
-```
-
-**Run:**
-```bash
-./sun_ekf
+fpm run --compiler flang sun_ekf
 ```
 
 **Inputs:** `observations.dat`, `de440s.bsp`  
@@ -147,14 +147,9 @@ from the observer's surface position (~6378 km) is ~57 arcmin — this directly
 constrains the distance `a` and breaks the μ–a degeneracy that exists for the
 distant Sun.
 
-**Compile:**
+**Build and run:**
 ```bash
-flang moon_ekf.f90 -o moon_ekf
-```
-
-**Run:**
-```bash
-./moon_ekf
+fpm run --compiler flang moon_ekf
 ```
 
 **Inputs:** `observations.dat`, `de440s.bsp`  
@@ -181,14 +176,9 @@ flang moon_ekf.f90 -o moon_ekf
 
 **Propagation:** Yoshida 4th-order N-body integrator (N=3)
 
-**Compile:**
+**Build and run:**
 ```bash
-flang sun_ekf_3body.f90 -o sun_ekf_3body
-```
-
-**Run:**
-```bash
-./sun_ekf_3body
+fpm run --compiler flang sun_ekf_3body
 ```
 
 **Inputs:** `observations.dat`, `de440s.bsp`  
@@ -215,14 +205,9 @@ Note: sigma points are propagated only for the measurement update; the
 prediction step propagates only the mean (N-body orbits diverge too fast
 for sigma-point spreading over long intervals).
 
-**Compile:**
+**Build and run:**
 ```bash
-flang kalman_sim.f90 -o kalman_sim
-```
-
-**Run:**
-```bash
-./kalman_sim
+fpm run --compiler flang kalman_sim
 ```
 
 **Inputs:** `observations.dat` (noisy alt/az), `de440s.bsp`  
@@ -238,14 +223,9 @@ Builds a custom Newtonian SPK kernel (`newton.bsp`) by:
 3. Fitting type-2 Chebyshev segments
 4. Writing a minimal DAF/SPK binary file
 
-**Compile:**
+**Build and run:**
 ```bash
-flang newton_sim.f90 -o newton_sim
-```
-
-**Run:**
-```bash
-./newton_sim
+fpm run --compiler flang newton_sim
 ```
 
 **Inputs:** `de440s.bsp`  
@@ -266,19 +246,13 @@ Mountain Daylight Time.
 ```bash
 python3 plot_trajectory.py          # fetch Horizons data → artemis_ephemeris.json
 python3 convert_artemis_data.py     # convert JSON → artemis_orion.dat
-lfortran artemis_trajectory.f90 -o artemis_trajectory
-./artemis_trajectory                # compute → artemis_trajectory.dat
+fpm run --compiler flang artemis_trajectory   # compute → artemis_trajectory.dat
 python3 plot_artemis_fortran.py     # plot → artemis_trajectory_fortran.png
 ```
 
-**Compile:**
+**Build and run:**
 ```bash
-lfortran artemis_trajectory.f90 -o artemis_trajectory
-```
-
-**Run:**
-```bash
-./artemis_trajectory
+fpm run --compiler flang artemis_trajectory
 ```
 
 **Inputs:** `artemis_orion.dat`, `de440s.bsp`  
