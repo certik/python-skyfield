@@ -226,32 +226,42 @@ program test_de441_horizons
   end block
 
   ! ══════════════════════════════════════════════════════════════════
-  !  IAU76/80 + GST94 + λ-only polar wobble
+  !  IAU76/80 + GST94 + GPS-corrected nutation + λ-only polar wobble
   !
-  !  Uses the same nutation/precession model that Horizons reports
-  !  (IAU 1976 precession + IAU 1980 nutation + GMST82 + EQEQ94),
-  !  combined with the classical longitude-only polar wobble.
-  !  This is the most direct model match to Horizons.
+  !  Uses the same framework Horizons reports: IAU 1976 precession +
+  !  IAU 1980 nutation + GMST82 + EQEQ94, with longitude-only polar
+  !  wobble.  The nutation is corrected to match the true CIP obtained
+  !  from IAU 2006/2000A + dX/dY (equivalent to Horizons' daily GPS
+  !  corrections).  No ICRS frame bias (IAU76/80 was FK5-based).
   ! ══════════════════════════════════════════════════════════════════
   print '(A)', ''
-  print '(A)', '=== IAU76/80 + GST94 + λ-only wobble (Horizons model) ==='
+  print '(A)', '=== IAU76/80 + GST94 + GPS corr + λ-wobble (Horizons) ==='
 
   block
     use iau76_mod
     real(dp) :: M80(3,3), dpsi80, deps80, meps80
+    real(dp) :: M80_uncorr(3,3), dpsi_unc, deps_unc, meps_unc
+    real(dp) :: dpsi_corr, deps_corr
     real(dp) :: gast80, R80(3,3)
     real(dp) :: dlam, lon_corr
     real(dp) :: R_altaz80(3,3)
     real(dp) :: sa(3), sd, salt, saz, salt_deg, saz_deg, sdiam
     real(dp) :: ma(3), md, malt, maz, malt_deg, maz_deg, mdiam
 
-    ! IAU76/80 precession-nutation matrix (from GCRS)
-    call compute_M80(jd_tt, M80, dpsi80, deps80, meps80)
+    ! Step 1: uncorrected IAU80 to get its CIP
+    call compute_M80(jd_tt, M80_uncorr, dpsi_unc, deps_unc, meps_unc)
 
-    ! GAST = GMST82 + EQEQ94 (equinox-based sidereal time)
-    gast80 = gst94_rad(jd_whole, ut1_frac, jd_tt)
+    ! Step 2: nutation corrections = true CIP (IAU06+dX/dY) − IAU80 CIP
+    dpsi_corr = (cip_X - M80_uncorr(3,1)) / sin(meps_unc)
+    deps_corr = cip_Y - M80_uncorr(3,2)
 
-    ! Equinox-based ITRS rotation: R = Rz(-GAST) × NPB  (no RPOM)
+    ! Step 3: corrected IAU80 precession-nutation matrix
+    call compute_M80(jd_tt, M80, dpsi80, deps80, meps80, dpsi_corr, deps_corr)
+
+    ! Step 4: corrected GAST (using corrected dpsi in equation of equinoxes)
+    gast80 = gst94_corrected_rad(jd_whole, ut1_frac, jd_tt, dpsi80)
+
+    ! Equinox-based ITRS rotation: R = Rz(-GAST) × NPB
     R80 = mat33_mul(rot_z(-gast80), M80)
 
     ! Classical λ-only polar wobble
@@ -272,13 +282,13 @@ program test_de441_horizons
     malt_deg = malt * RAD2DEG
     maz_deg  = maz  * RAD2DEG
 
-    call chk_deg('Sun  alt  vs Horizons', salt_deg,  27.036034_dp,         0.03_dp/3600.0_dp, n_fail)
-    call chk_deg('Sun  az   vs Horizons', saz_deg,  179.049603_dp,         0.03_dp/3600.0_dp, n_fail)
+    call chk_deg('Sun  alt  vs Horizons', salt_deg,  27.036034_dp,         0.015_dp/3600.0_dp, n_fail)
+    call chk_deg('Sun  az   vs Horizons', saz_deg,  179.049603_dp,         0.015_dp/3600.0_dp, n_fail)
     call chk_au ('Sun  dist vs Horizons', sd,         0.98332708143732_dp, 5.0e-11_dp,        n_fail)
     call chk_as ('Sun  diam vs Horizons', sdiam,   1950.991_dp,            1.0e-2_dp,         n_fail)
 
-    call chk_deg('Moon alt  vs Horizons', malt_deg,  21.518703_dp,         0.03_dp/3600.0_dp, n_fail)
-    call chk_deg('Moon az   vs Horizons', maz_deg,  157.820214_dp,         0.03_dp/3600.0_dp, n_fail)
+    call chk_deg('Moon alt  vs Horizons', malt_deg,  21.518703_dp,         0.015_dp/3600.0_dp, n_fail)
+    call chk_deg('Moon az   vs Horizons', maz_deg,  157.820214_dp,         0.015_dp/3600.0_dp, n_fail)
     call chk_au ('Moon dist vs Horizons', md,         0.00252475127904_dp, 1.0e-11_dp,        n_fail)
     call chk_as ('Moon diam vs Horizons', mdiam,   1897.634_dp,            1.0e-2_dp,         n_fail)
   end block

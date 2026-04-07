@@ -19,7 +19,7 @@ module iau76_mod
   private
 
   public :: iau80_nutation, obl80, prec76_matrix, gmst82_rad, &
-            eqeq94, gst94_rad, compute_M80
+            eqeq94, eqeq94_dpsi, gst94_rad, gst94_corrected_rad, compute_M80
 
 contains
 
@@ -308,19 +308,27 @@ contains
   function eqeq94(jd_tt) result(ee)
     real(dp), intent(in) :: jd_tt
     real(dp) :: ee
-    real(dp) :: t, om, dpsi, deps, eps0
+    real(dp) :: dpsi, deps
+
+    call iau80_nutation(jd_tt, dpsi, deps)
+    ee = eqeq94_dpsi(jd_tt, dpsi)
+  end function
+
+  ! ── Equation of the equinoxes given pre-computed dpsi ──────────
+  !  Like eqeq94 but accepts dpsi as input (for GPS-corrected nutation).
+  function eqeq94_dpsi(jd_tt, dpsi) result(ee)
+    real(dp), intent(in) :: jd_tt, dpsi
+    real(dp) :: ee
+    real(dp) :: t, om, eps0
 
     t = (jd_tt - T0) / 36525.0_dp
 
-    ! Longitude of ascending node of Moon (same expression as in nut80)
     om = mod((450160.280_dp + (-482890.539_dp + (7.455_dp + &
          0.008_dp * t) * t) * t) * ASEC2RAD + &
          mod(-5.0_dp * t, 1.0_dp) * TAU, TAU)
 
-    call iau80_nutation(jd_tt, dpsi, deps)
     eps0 = obl80(jd_tt)
 
-    ! Equation of the equinoxes (IAU 1994)
     ee = dpsi * cos(eps0) + ASEC2RAD * (0.00264_dp * sin(om) + &
          0.000063_dp * sin(om + om))
   end function
@@ -334,25 +342,42 @@ contains
     if (gast < 0.0_dp) gast = gast + TAU
   end function
 
-  ! ── Combined M = N × P × B  (IAU 76/80 + ICRS bias) ────────────
-  !  Computes the full precession-nutation matrix from GCRS to the
-  !  true equator and equinox of date, using IAU 1976 precession and
-  !  IAU 1980 nutation.  Includes the ICRS-to-J2000 frame bias.
+  ! ── GAST with corrected dpsi ────────────────────────────────────
+  !  Like gst94_rad but uses a corrected dpsi in the equation of equinoxes
+  !  (for GPS/VLBI-corrected nutation).
+  function gst94_corrected_rad(jd_ut1_whole, jd_ut1_frac, jd_tt, dpsi) result(gast)
+    real(dp), intent(in) :: jd_ut1_whole, jd_ut1_frac, jd_tt, dpsi
+    real(dp) :: gast
+    gast = mod(gmst82_rad(jd_ut1_whole, jd_ut1_frac) + eqeq94_dpsi(jd_tt, dpsi), TAU)
+    if (gast < 0.0_dp) gast = gast + TAU
+  end function
+
+  ! ── Combined M = N × P  (IAU 76/80, no ICRS bias) ─────────────
+  !  Computes the precession-nutation matrix using IAU 1976 precession
+  !  and IAU 1980 nutation.  No ICRS-to-J2000 frame bias is applied
+  !  (IAU76/80 was defined in the FK5 system, not ICRS).
   !
-  !  Also returns dpsi, deps (radians) and mean obliquity (radians).
-  subroutine compute_M80(jd_tt, M, dpsi_out, deps_out, mean_ob_out)
-    use astro_mod, only: icrs_to_j2000_bias, build_nutation_matrix
+  !  Optional dpsi_corr/deps_corr add nutation corrections (radians),
+  !  e.g. derived from GPS/VLBI celestial pole offsets.
+  !
+  !  Returns dpsi, deps (corrected if dpsi_corr/deps_corr given),
+  !  and mean obliquity, all in radians.
+  subroutine compute_M80(jd_tt, M, dpsi_out, deps_out, mean_ob_out, &
+                          dpsi_corr, deps_corr)
+    use astro_mod, only: build_nutation_matrix
     real(dp), intent(in)  :: jd_tt
     real(dp), intent(out) :: M(3,3), dpsi_out, deps_out, mean_ob_out
-    real(dp) :: B(3,3), P(3,3), Nmat(3,3), true_ob
+    real(dp), intent(in), optional :: dpsi_corr, deps_corr
+    real(dp) :: P(3,3), Nmat(3,3), true_ob
 
-    B = icrs_to_j2000_bias()
     P = prec76_matrix(jd_tt)
     call iau80_nutation(jd_tt, dpsi_out, deps_out)
+    if (present(dpsi_corr)) dpsi_out = dpsi_out + dpsi_corr
+    if (present(deps_corr)) deps_out = deps_out + deps_corr
     mean_ob_out = obl80(jd_tt)
     true_ob = mean_ob_out + deps_out
     Nmat = build_nutation_matrix(mean_ob_out, true_ob, dpsi_out)
-    M = mat33_mul(Nmat, mat33_mul(P, B))
+    M = mat33_mul(Nmat, P)
   end subroutine
 
 end module iau76_mod
