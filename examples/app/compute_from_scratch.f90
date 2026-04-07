@@ -35,29 +35,13 @@ program compute_from_scratch
 
   ! Horizons reference
   real(dp) :: diff_val
-  character(len=256) :: exe_dir
   character(len=256) :: bsp_file
-  integer :: slen
-
-  ! Get directory of this executable (for data files)
-  call get_command_argument(0, exe_dir)
-  ! Strip filename to get directory
-  slen = index(exe_dir, '/', back=.true.)
-  if (slen > 0) then
-    exe_dir = exe_dir(1:slen)
-  else
-    exe_dir = './'
-  end if
 
   ! Load data files
   call get_command_argument(1, bsp_file)
   if (len_trim(bsp_file) == 0) bsp_file = 'de440s.bsp'
-  call load_nutation(trim(exe_dir) // 'nutation.dat')
-  if (index(trim(bsp_file), '/') > 0) then
-    call spk_open(trim(bsp_file), kernel)
-  else
-    call spk_open(trim(exe_dir) // trim(bsp_file), kernel)
-  end if
+  call load_nutation('nutation.dat')
+  call spk_open(trim(bsp_file), kernel)
 
   ! ── Test case parameters ──
   lat_deg = 40.0_dp
