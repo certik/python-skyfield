@@ -54,18 +54,12 @@ program test_de441_horizons
   ! ── Check for DE441s ─────────────────────────────────────────────────
   inquire(file='de441s.bsp', exist=file_exists)
   if (.not. file_exists) then
-    ! Fall back to the full part-2 file
-    inquire(file='de441_part-2.bsp', exist=file_exists)
-    if (.not. file_exists) then
-      print '(A)', 'SKIP — de441s.bsp not found (run: fpm run create_de441s)'
-      stop
-    end if
-    call load_nutation('nutation.dat')
-    call spk_open('de441_part-2.bsp', kernel)
-  else
-    call load_nutation('nutation.dat')
-    call spk_open('de441s.bsp', kernel)
+    print '(A)', 'SKIP — de441s.bsp not found (run: fpm run create_de441s)'
+    stop
   end if
+
+  call load_nutation('nutation.dat')
+  call spk_open('de441s.bsp', kernel)
 
   ! ══════════════════════════════════════════════════════════════════
   !  40°N, 0°E, 0 m — 2025-01-01 12:00 UTC
