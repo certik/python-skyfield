@@ -27,34 +27,22 @@ program artemis_trajectory
   real(dp) :: max_met_s
   integer  :: mdt_ts, mdt_jd_i, mdt_yr, mdt_mo, mdt_day, mdt_hr, mdt_min, mdt_sec
 
-  character(len=256) :: exe_dir, bsp_file
-  integer :: slen
-
-  ! Get directory of executable for data files
-  call get_command_argument(0, exe_dir)
-  slen = index(exe_dir, '/', back=.true.)
-  if (slen > 0) then
-    exe_dir = exe_dir(1:slen)
-  else
-    exe_dir = './'
-  end if
-
   ! Precompute obliquity rotation (equatorial → ecliptic)
   cos_eps = cos(OBLIQUITY_RAD)
   sin_eps = sin(OBLIQUITY_RAD)
 
   ! Read Orion spacecraft data
   print *, "Reading Orion data..."
-  open(newunit=u_in, file=trim(exe_dir) // 'artemis_orion.dat', status='old')
+  open(newunit=u_in, file='artemis_orion.dat', status='old')
   read(u_in, *) n_pts, launch_ts
   print *, "  Records:", n_pts, "  Launch TS:", launch_ts
 
   ! Open SPK ephemeris
   print *, "Opening de440s.bsp..."
-  call spk_open(trim(exe_dir) // 'de440s.bsp', kernel)
+  call spk_open('de440s.bsp', kernel)
 
   ! Open output file
-  open(newunit=u_out, file=trim(exe_dir) // 'artemis_trajectory.dat', status='replace')
+  open(newunit=u_out, file='artemis_trajectory.dat', status='replace')
   write(u_out, '(A)') '# Artemis II trajectory (Fortran-computed)'
   write(u_out, '(A)') '# Columns: timestamp met_s orion_x orion_y orion_z ' // &
                        'moon_x moon_y moon_z earth_dist_km moon_dist_km velocity_km_s range_rate_km_s'
