@@ -1,0 +1,10 @@
+.venv/
+de421.bsp
+*.png
+*.pdf
+nutation.dat
+compute_from_scratch_f
+*.mod
+*.out
+a.out
+build/
